@@ -1,0 +1,62 @@
+# Environments
+.venv/
+env/
+venv/
+ENV/
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+
+# Data (Crucial: Never commit raw source data)
+data/
+*.csv
+*.xls
+*.xlsx
+*.json
+!data/.gitkeep
+
+# Project Outputs
+output/
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.html
+model_results.txt
+refined_results.txt
+heckman_results.txt
+sensitivity_results.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build/Misc
+node_modules/
+dist/
+build/
+bin/
+obj/
+
+# Paper Source (Keep private until publication)
+paper/
