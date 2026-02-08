@@ -2,7 +2,7 @@
 
 **A methodological framework for identifying the structural limits of AI productivity via benchmark selection bias.**
 
-This repository contains the exploratory data pipeline and econometric models used to map the **"High-Entropy Regime"**---the informational boundary where task complexity causes a collapse in AI Marginal Productivity.
+This repository contains the exploratory data pipeline and econometric models used to map the **"High-Entropy Regime"**---the informational boundary where task complexity causes a non-linear collapse in AI Marginal Productivity.
 
 ## Core Concepts
 
@@ -14,8 +14,7 @@ This repository contains the exploratory data pipeline and econometric models us
 
 *   **Data:** Scale AI RLI (Remote Labor Index) Public Set + O*NET Baseline Wages.
 *   **Selection Correction:** A two-stage Heckman procedure utilizing a Probit model to account for non-random task inclusion in professional benchmarks. **Primary finding: Significant evidence of curation bias (p=0.03).**
-*   **Econometrics:** Mean-Centered Translog Production Function with **Wild Cluster Bootstrap** estimation to generate robust inference from finite samples (G=10 projects, N=57 valid subtasks). 
-*   **Validation:** Out-of-sample predictive testing performed against the **CascadingLight** market lead dataset.
+*   **Econometrics:** Mean-Centered Translog Production Function with **Wild Cluster Bootstrap** estimation to generate robust inference from finite samples (G=10 projects, N=57 valid subtasks).
 
 ## Repository Content
 
