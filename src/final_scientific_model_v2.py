@@ -60,16 +60,14 @@ def run_hardened_analysis():
     boot_df = pd.DataFrame(bootstrap_results)
     
     # Print results without special characters
-    print("\nBootstrapped Coefficients (Mean):")
-    print(boot_df.mean())
-    print("\nBootstrapped Significance (p-value proxy):")
+    print("\nFull Model Table (for LaTeX):")
     for col in boot_df.columns:
         mean_val = boot_df[col].mean()
-        if mean_val > 0:
-            p_val = (boot_df[col] < 0).mean() * 2
-        else:
-            p_val = (boot_df[col] > 0).mean() * 2
-        print(f"{col}: p ~= {min(1.0, p_val):.4f}")
+        std_err = boot_df[col].std()
+        ci_lower = boot_df[col].quantile(0.025)
+        ci_upper = boot_df[col].quantile(0.975)
+        p_val = (boot_df[col] < 0).mean() * 2 if mean_val > 0 else (boot_df[col] > 0).mean() * 2
+        print(f"{col}: {mean_val:.4f} ({std_err:.4f}) [{ci_lower:.4f}, {ci_upper:.4f}] p={min(1.0, p_val):.4f}")
 
     # Save outputs
     os.makedirs('output/v2', exist_ok=True)
