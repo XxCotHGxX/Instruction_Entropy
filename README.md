@@ -19,9 +19,9 @@ This repository contains the data pipeline and formal econometric models used to
 ## Methodology
 
 *   **Data:** Scale AI RLI (Remote Labor Index) Public Set + O*NET Baseline Wages.
-*   **Decomposition:** Projects are decomposed into discrete professional requirements (N=156) to ensure statistical significance.
-*   **Econometrics:** Clustered Hedonic Translog Production Function (Standard Errors clustered at the project level).
-*   **Pipeline:** Boilerplate-agnostic tokenization and structural static analysis for kappa calculation.
+*   **Decomposition:** 10 foundational projects are decomposed into **156 discrete professional requirements**, resulting in a filtered econometric dataset of **N=58** valid subtasks.
+*   **Econometrics:** Clustered Hedonic Translog Production Function and **Regression Kink Design (RKD)**. Standard Errors are clustered at the project level to account for within-project correlation.
+*   **Pipeline:** Boilerplate-agnostic tokenization and **Reference Density** analysis for kappa calculation.
 
 ## Visualizations
 
