@@ -13,8 +13,8 @@ This repository contains the exploratory data pipeline and econometric models us
 ## Research Methodology (Pilot Study)
 
 *   **Data:** Scale AI RLI (Remote Labor Index) Public Set + O*NET Baseline Wages.
-*   **Selection Correction:** A two-stage Heckman procedure utilizing a Probit model to account for non-random task inclusion in professional benchmarks.
-*   **Econometrics:** Mean-Centered Translog Production Function with **Wild Cluster Bootstrap** estimation to generate robust inference from finite samples (G=10 projects, N=57 valid subtasks).
+*   **Selection Correction:** A two-stage Heckman procedure utilizing a Probit model to account for non-random task inclusion in professional benchmarks. **Primary finding: Significant evidence of selection bias (p=0.03).**
+*   **Econometrics:** Mean-Centered Translog Production Function with **Wild Cluster Bootstrap** estimation to generate robust inference from finite samples (G=10 projects, N=57 valid subtasks). 
 *   **Validation:** Out-of-sample predictive testing performed against the **CascadingLight** market lead dataset.
 
 ## Repository Content
