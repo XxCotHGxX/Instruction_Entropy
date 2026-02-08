@@ -6,9 +6,9 @@ This repository contains the data pipeline and formal econometric models used to
 
 ## Core Concepts
 
-*   **Instruction Entropy (E):** A measurement of "Inference Density." Defined as the ratio of text-based solution tokens (logic) to instruction tokens, adjusted for boilerplate and smoothed for instruction quality.
+*   **Instruction Entropy (E):** A measurement of "Inference Density." Defined as the ratio of text-based solution tokens (logic) to instruction tokens, adjusted for boilerplate and smoothed for instruction quality. **Statistically significant (z=11.37, p < 0.001) as a driver of the human wage premium.**
 *   **Artifact Coupling (kappa):** A measurement of state dependency density. This metric uses a Structural Complexity Index (0.4 * file fan-out + 0.6 * hierarchy depth) to quantify the coordination cost across multiple solution assets.
-*   **The Complexity Kink:** The statistically significant (p=0.009) non-linear threshold where AI productivity collapses, identified via a Clustered Hedonic Translog model.
+*   **The Complexity Kink:** The statistically significant (p=0.022) non-linear threshold where AI productivity collapses, identified via a mean-centered Clustered Hedonic Translog model.
 
 ## Research Objectives
 

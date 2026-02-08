@@ -139,13 +139,22 @@ def decompose_projects():
 def run_analysis(df):
     """Clustered regression and KDE Gradient mapping."""
     df = df[(df['e_sub'] > 0) & (df['k_sub'] > 0) & (df['ln_wage_eq'] > 0)].copy()
+    
+    # Mean-centering independent variables for Translog interpretability
+    # This addresses the 'large intercept' critique and makes 1st order 
+    # coefficients represent elasticities at the sample mean.
+    df['c_log_e'] = np.log(df['e_sub']) - np.log(df['e_sub']).mean()
+    df['c_log_k'] = np.log(df['k_sub']) - np.log(df['k_sub']).mean()
+    df['c_ai_score'] = df['ai_score'] - df['ai_score'].mean()
+    
+    formula = 'ln_wage_eq ~ c_log_e + c_log_k + I(0.5*c_log_e**2) + I(0.5*c_log_k**2) + I(c_log_e*c_log_k) + c_ai_score'
+    model = smf.ols(formula, data=df).fit(cov_type='cluster', cov_kwds={'groups': df['project_id']})
+    print("\n--- CLUSTERED HEDONIC TRANSLOG (MEAN-CENTERED) ---")
+    print(model.summary())
+    
+    # Use the original logs for visualization to keep axis readable
     df['log_e'] = np.log(df['e_sub'])
     df['log_k'] = np.log(df['k_sub'])
-    
-    formula = 'ln_wage_eq ~ log_e + log_k + I(0.5*log_e**2) + I(0.5*log_k**2) + I(log_e*log_k) + ai_score'
-    model = smf.ols(formula, data=df).fit(cov_type='cluster', cov_kwds={'groups': df['project_id']})
-    print("\n--- CLUSTERED HEDONIC TRANSLOG (STRESS-TESTED) ---")
-    print(model.summary())
     
     plt.figure(figsize=(12, 8))
     sns.kdeplot(
