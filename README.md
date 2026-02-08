@@ -1,19 +1,19 @@
-# Instruction Entropy: Quantifying the Complexity Kink (2026)
+# Instruction Entropy: Quantifying the High-Entropy Regime (2026)
 
-**A methodological framework for identifying the structural limits of AI productivity via the High-Entropy Regime.**
+**A methodological framework for identifying the structural limits of AI productivity via benchmark selection bias.**
 
-This repository contains the exploratory data pipeline and econometric models used to map the **"Complexity Kink"**---the structural break where task complexity causes a non-linear collapse in AI Marginal Productivity.
+This repository contains the exploratory data pipeline and econometric models used to map the **"High-Entropy Regime"**---the informational boundary where task complexity causes a collapse in AI Marginal Productivity.
 
 ## Core Concepts
 
 *   **Inference Density (E):** An Information-Theoretic measure of "Hidden Requirements." Defined as the expansion ratio between the Minimum Description Length (MDL) of the instruction set and the resulting solution.
 *   **Coordination Complexity (kappa):** A normalized reference-density metric quantifying state-dependency across multiple solution assets.
-*   **The Complexity Kink (Structural Break):** The informational coordinate where the cost of AI orchestration begins to exceed the value of execution, defining the 2026 human labor floor.
+*   **The Structural Break:** The informational coordinate where the cost of AI orchestration begins to exceed the value of execution, defining the 2026 human labor floor.
 
 ## Research Methodology (Pilot Study)
 
 *   **Data:** Scale AI RLI (Remote Labor Index) Public Set + O*NET Baseline Wages.
-*   **Selection Correction:** A two-stage Heckman procedure utilizing a Probit model to account for non-random task inclusion in professional benchmarks. **Primary finding: Significant evidence of selection bias (p=0.03).**
+*   **Selection Correction:** A two-stage Heckman procedure utilizing a Probit model to account for non-random task inclusion in professional benchmarks. **Primary finding: Significant evidence of curation bias (p=0.03).**
 *   **Econometrics:** Mean-Centered Translog Production Function with **Wild Cluster Bootstrap** estimation to generate robust inference from finite samples (G=10 projects, N=57 valid subtasks). 
 *   **Validation:** Out-of-sample predictive testing performed against the **CascadingLight** market lead dataset.
 
@@ -21,7 +21,7 @@ This repository contains the exploratory data pipeline and econometric models us
 
 The `output/` directory contains high-fidelity econometric assets:
 *   **The Technological Frontier (KDE):** A continuous gradient map of labor distribution across inference and coordination axes.
-*   **Selection Stage Results:** Probit coefficients for task inclusion feasibility.
+*   **The Selection Cliff:** Visualization of benchmark curation bias (p=0.03).
 *   **Translog Results:** Full model coefficients with bootstrapped confidence intervals.
 
 ## Setup and Execution
