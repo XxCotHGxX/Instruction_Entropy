@@ -1,0 +1,243 @@
+Repository URL: https://github.com/wormhole-foundation/world-id-state-bridge solana/commit/152df3
+Full commit hash: 152df36ad58047fd910a77d44cbd07f25d0b8a12
+========================================================================
+Findings Summary:
+==================
+H1: The latest available root may be inactive and
+potentially undesirably removed
+High severity issue
+Impact: High Likelihood: Medium
+Target: verify_groth16_proof.rs,
+verify_and_execute.rs,
+clean_up_root.rs
+Type: Denial of service
+Description
+CleanUpRoot allows anyone to close a root account that is no longer active.
+Although the instruction verifies that the root is inactive, it heavily depends
+on the periodic update of root accounts. In a scenario where the root_expiry
+is set too low and the new state root has not yet been submitted to the
+Solana blockchain:
+• users would be unable to verify their proofs since the latest available root
+is inactive;
+• it becomes possible to remove the most up-to-date state root.
+This issue can be partially mitigated by updating the root_expiry in the Config
+account. However, if this update is not performed quickly enough, an
+attacker could invoke CleanUpRoot on the refund_recipient’s behalf and close
+the latest available state root.
+This behavior might be supported by the batching of commitments, as
+outlined in the Worldcoin Whitepaper:
+A batcher monitors the work queue. When
+1) a sufficiently large number of commitments are queued or
+2) the oldest commitment has been queued for too long, the
+batcher will take a batch of keys from the queue to process.
+— Worldcoin Whitepaper
+This means that new commitments are not necessarily propagated on-chain
+immediately, which could result in less frequent root updates, increasing the
+likelihood of this scenario.
+
+Recommendation
+Our recommendation is to:
+• allow users to verify the proof with the latest available root (i.e. the one
+stored in LatestRoot) without checking for active status;
+• ensure that the root being removed in the CleanUpRoot instruction is not
+the one currently stored in the LatestRoot account.
+Fix 1.1
+This issue has been fixed in accordance with the recommendation.
+===========================================================================
+M1: Possible arithemtic overflow during root
+is_active check
+Medium severity issue
+Impact: High Likelihood: Low
+Target: clean_up_root.rs,
+verify_groth16_proof.rs,
+verify_and_execute.rs
+Type: Arithmetics
+Description
+Unchecked arithmetic within the is_active function implemented for root can
+lead to a denial of service. As specified in the root Cargo.toml file, the
+overflow-checks option is set to true, meaning a panic will occur if an overflow
+is detected.
+Listing 1. Excerpt from Cargo file
+1 [profile.release]
+2 overflow-checks = true
+As shown in the snippet below, the addition operation is prone to overflow.
+The read_block_time is fetched from Ethereum, while the config_root_expiry is
+set by the Config authority to any arbitrary value. This creates the potential
+for undesired behavior, where a panic in this function would result in a denial
+of service for the CleanUpRoot and VerifyGroth16Proof instructions.
+Listing 2. Excerpt from Root Implementation
+1 pub fn is_active(&self, timestamp: &u64, config_root_expiry: &u64) -> bool {
+2 let read_block_time_in_secs = self.read_block_time / 1_000_000;
+3 let expiry_time = read_block_time_in_secs + config_root_expiry;
+4 expiry_time >= *timestamp
+5 }
+
+Recommendation
+Fix the unchecked arithmetic and ensure that the operation cannot overflow
+in any scenario. One possible implementation of the fix could be as follows:
+Listing 3. Excerpt from Root Implementation
+1 pub fn is_active(&self, timestamp: &u64, config_root_expiry: &u64) -> bool {
+2 let read_block_time_in_secs = self.read_block_time / 1_000_000;
+3 let result = read_block_time_in_secs.checked_add(*config_root_expiry);
+4 let expiry_time = match result {
+5 Some(result) => result,
+6 None => u64::MAX,
+7 };
+8 expiry_time >= *timestamp
+9 }
+Fix 1.1
+This issue has been fixed using an approach similar to the recommendations,
+which is also valid. The arithmetic overflow is resolved by using the
+saturating_add function, which will result in u64::MAX in case an overflow
+occurs.
+===========================================================================
+M2: Missing mut constraint
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: clean_up_root.rs,
+close_signatures.rs,
+update_root_with_query.rs
+Type: Access control
+Description
+In several instances within the source code, the mut constraint is missing for
+accounts that will receive funds after another account is closed. This
+constraint is crucial because it specifies that the account must be writable
+(i.e. capable of having lamports added to its balance). The account’s
+mutability is reflected in the program’s IDL, where the corresponding account
+is marked as writable. If the mutability of an account is not explicitly set, it
+can lead to transaction failures due to attempting to modify the balance of a
+read-only account. Particularly these Instructions are missing the constraint.
+The UpdateRootWithQuery instruction is missing the mut constraint for the
+refund_recipient. If the payer and refund_recipient refer to the same account,
+the issue may go unnoticed since the payer is marked as mutable. However, if
+these two fields correspond to different accounts, the instruction cannot be
+processed successfully, even with valid signatures, because the balance of
+the refund_recipient cannot be updated without it being writable.
+Listing 4. Excerpt from UpdateRootWithQuery
+1 // ...
+2 /// CHECK: This account is the refund recipient for the above signature_set
+3 #[account(address = guardian_signatures.refund_recipient)]
+4 refund_recipient: AccountInfo<'info>,
+5 // ...
+The CleanUpRoot instruction also contains this issue. If the transaction is
+signed by the refund_recipient, who is marked as the fee payer responsible
+for paying transaction fees (and thus mutable), the instruction can be
+successfully processed. However, if the instruction is invoked by someone
+else (i.e. the refund_recipient is not the fee payer and therefore not marked
+as mutable), the instruction cannot be processed.
+Listing 5. Excerpt from CleanUpRoot
+1 // ...
+2 /// CHECK: This account is the refund recipient for the above root.
+3 #[account(address = root.refund_recipient)]
+4 refund_recipient: AccountInfo<'info>,
+5 // ...
+The CloseSignatures instruction presents a third scenario. In this case, the
+likelihood of the issue is low because the refund_recipient is marked as a
+signer, making it most likely that the refund_recipient will invoke this
+instruction. As a result, this account will also be the fee payer (and therefore
+mutable by default).
+Listing 6. Excerpt from CloseSignatures
+1 // ...
+2 #[account(address = guardian_signatures.refund_recipient)]
+3 refund_recipient: Signer<'info>,
+4 // ...
+
+Recommendation
+We recommend using the mut constraint in all of the mentioned account
+contexts.
+Fix 1.1
+This issue has been fixed in accordance with the recommendation.
+===========================================================================
+W1: Possible Reinitialization
+Impact: Warning Likelihood: N/A
+Target: post_signatures.rs Type: Reinitialization
+Description
+The PostSignatures instruction defines the guardian_signatures account with
+the init_if_needed constraint, allowing the payer—or, more appropriately, the
+authority—to append to the signatures list across multiple transactions.
+Listing 7. Excerpt from PostSignatures
+ 1 pub struct PostSignatures<'info> {
+ 2 #[account(mut)]
+ 3 payer: Signer<'info>,
+ 4 // ...
+ 5 
+ 6 #[account(
+ 7 init_if_needed,
+ 8 payer = payer,
+ 9 space = 8 +
+10 GuardianSignatures::compute_size(usize::from(total_signatures))
+11 )]
+12 guardian_signatures: Account<'info, GuardianSignatures>,
+13 }
+Using this constraint can often lead to a reinitialization attack. A
+reinitialization attack occurs when an attacker (or even an unaware team
+member) can reset an already initialized (and typically modified) account
+back to its initial state. Due to the behavior of the init_if_needed constraint,
+which does not call create_account (allocate, assign, transfer) if the account
+is already initialized, it is crucial for developers to correctly verify that the
+account was not previously initialized. Failing to do so could result in the
+stored data being reset.
+
+Recommendation
+We recommend implementing the IsInitialized trait for the GuardianSignatures
+along with a new struct field is_initialized. One possible solution could look
+like the following code snippet.
+Listing 8. Excerpt from guardian_signatures.rs
+ 1 // ...
+ 2 pub struct GuardianSignatures {
+ 3 pub is_initialized: bool,
+ 4 // other fields
+ 5 }
+ 6 
+ 7 impl IsInitialized for GuardianSignatures {
+ 8 fn is_initialized(&self) -> bool {
+ 9 self.is_initialized
+10 }
+11 }
+Fix 1.1
+The issue was fixed by disallowing empty initial guardian_signatures. This
+resolves the problem, as re-initialization is no longer possible, the
+guardian_signatures field within the GuardianSignatures will always contain at
+least one signature after initialization.
+===========================================================================
+I1: Signature Malleability due to accepting S
+values with high and also low order
+Impact: Info Likelihood: N/A
+Target: update_root_with_query.rs Type: Data validation
+Description
+During the audit, the client was informed that the
+solana_program::secp256k1_recover function does not prevent signature
+malleability.
+Signature malleability in ECDSA occurs when a valid signature can be altered
+in such a way that the modified signature remains valid without changing the
+underlying message. This happens because ECDSA signatures consist of two
+components, r and s, where s can be replaced with its additive inverse
+modulo the curve order, resulting in a different signature that still verifies
+correctly.
+In this case, due to the implementation of solana_program::secp256k1_recover,
+signature malleability is possible since the order of s is included in the
+signature. However, to create the additive inverse modulo the curve order of
+the s value, an attacker would need access to the original signature created
+by any Guardian. Additionally, this type of attack is typically associated with
+double-spending scenarios, where signature uniqueness is critical. Therefore,
+we do not think there are any security risks posed by signature malleability in
+this context. Nevertheless, we think it is important to highlight this fact,
+particularly for potential future expansions of the project.
+Quoutes
+The client was already familiar with the issue before being informed.
+Using secp256k1_recover without additional checks can result
+in Signature Malleability. Are you aware of this?
+— Ackee Team
+I’m aware of signature malleability, though I’m not sure how
+it’s relevant in this context (as you mention). The signature
+simply needs to be valid against the recomputed hash and is
+not used in any other way (such as for replay protection).
+Producing a second, valid signature based on the first should
+have no impact (please let us know if you see something
+different!).
+— Wormhole Team
+Recommendation
+It is good practice to accept s values of only a particular order. However,
+since the signatures are generated by a decentralized guardian network, it is
+better not to alter them, as it is understandably impossible to enforce each
+guardian in such a network to generate signatures of a specific order.

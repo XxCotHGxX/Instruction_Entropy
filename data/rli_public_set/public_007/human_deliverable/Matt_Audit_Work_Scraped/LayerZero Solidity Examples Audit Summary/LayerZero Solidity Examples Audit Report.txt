@@ -1,0 +1,104 @@
+LayerZero Audits - Ackee Blockchain
+Audit Period: April 27 – May 3, 2022
+Audit: LzApp + Tokens Audit
+Commit: 87941ce (Re-audit Commit: 865a1ab)
+==============================
+
+Finding: Burn address issue
+Severity: High
+Description: Potential issues with handling the burn address could lead to loss or misallocation of tokens.
+Recommendation: Implement appropriate checks and safeguards when interacting with the burn address.
+
+Finding: Condition bypass
+Severity: Medium
+Description: Certain conditions in the code can be bypassed under specific scenarios, leading to unexpected behavior.
+Recommendation: Harden conditional logic to prevent bypasses.
+
+Finding: Low test coverage
+Severity: Warning
+Description: Some contracts lack sufficient unit tests, which may miss edge cases and vulnerabilities.
+Recommendation: Increase unit test coverage, especially for critical functions.
+
+Finding: Code duplication
+Severity: Warning
+Description: Duplicate code found in multiple areas, which may hinder maintainability and clarity.
+Recommendation: Refactor contracts to reduce duplication via better use of inheritance and libraries.
+
+Finding: ERC721, ERC1155 reentrancy
+Severity: Warning
+Description: Lack of reentrancy protections in functions dealing with ERC721/ERC1155 tokens could be risky.
+Recommendation: Apply `nonReentrant` modifiers and follow checks-effects-interactions pattern.
+
+Finding: Unresolved TODO
+Severity: Warning
+Description: Code contains unresolved TODO comments that indicate incomplete features or checks.
+Recommendation: Address or remove all TODOs prior to deployment.
+
+Finding: Unintended feature – Renounce ownership
+Severity: Warning
+Description: Renounce ownership functionality may not be desirable and can lock out future admin control.
+Recommendation: Consider removing or modifying this feature to align with the intended trust model.
+
+Informational:
+- Public functions can be external
+- Missing require message
+- Missing zero length handling
+- Missing documentation
+- Hardcoded types
+
+==============================
+Audit Period: June 15 – 26, 2022
+Audit: Solidity-examples Repository Audit
+Commit: c7525a5
+==============================
+
+Finding: Renounce ownership
+Severity: Medium
+Description: Renouncing ownership could make contract upgradeability and administration impossible.
+Recommendation: Remove or restrict this functionality if not absolutely necessary.
+
+Finding: Dangerous transfer ownership
+Severity: Medium
+Description: Ownership transfer functions may allow assignment to untrusted accounts or contracts.
+Recommendation: Introduce validation checks to mitigate risks of misconfigured ownership.
+
+Finding: Lack of events in state-changing functions
+Severity: Warning
+Description: Some state-altering functions do not emit events, reducing transparency and traceability.
+Recommendation: Add events to all critical state changes for auditability.
+
+Warnings:
+- Usage of solc optimizer
+- Floating pragma
+
+==============================
+Audit Period: August 3 – 8, 2022
+Audit: NativeProxyOFT20 / NativeOFT Audit
+Commit: b0bd359
+==============================
+
+Finding: Accepting messages from untrusted remotes
+Severity: Medium
+Description: The contract may process messages from unauthorized sources.
+Recommendation: Enforce strict verification of trusted remote addresses.
+
+Finding: Constructor data validation
+Severity: Medium
+Description: Lack of validation in constructor parameters may lead to misconfiguration.
+Recommendation: Add `require()` checks to validate constructor input.
+
+Low Severity:
+- Ownable pattern
+- Missing override for ERC165
+
+Warnings:
+- Usage of solc optimizer
+- Recent solc version
+- Empty _srcAddress can bypass trusted remote check
+- Unused _lzSend() function
+
+Informational:
+- Coding practice
+- Zero token transfer
+- Public functions
+- Unused SafeERC20

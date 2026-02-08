@@ -1,0 +1,127 @@
+Findings
+This chapter shows detailed output of our analysis and testing.
+5.1 General Comments
+Code is very well documented and every function has understandable comments.
+Code quality is also solid and follows basic good practices like require statements.
+Unit test coverage is also excellent.
+5.2 Issues
+Using our toolset, manual code review and unit testing we’ve identified the following
+issues.
+Low
+Low severity issues are more comments and recommendations rather than security
+issues. We provide hints on how to improve code readability and follow best
+practices. Further actions depend on the development team decision.
+ID Description Contract Line Status
+L1 Outdated compiler All 3 Acknowledged
+L2 Use of optimizer All Fixed
+L3 Use of uint256 where uint8 is
+enough
+GoodGhosting.s
+ol
+GoodGhostingB
+atched.sol
+51, 53
+48, 50
+Fixed
+L4 Variable packing Nearly all Fixed
+L1: Compiler version 0.6.11 is very outdated, we recommend using 0.8.0 at minimum.
+But also the newest one is also not recommended. Good practice is a compiler
+version established for 3-6 months.
+L1 rev. 2: The compiler is going to be upgraded in a new version of this contract. It
+will not be corrected in this contract.
+Blockchain audits | Blockchain security assessment
+L2: Optimizer can contain bugs and it could lead to unexpected behavior or even
+vulnerabilities. It’s not a direct threat, but we recommend optimizing the code
+manually.
+L2 rev. 2: Optimizer was removed from the configuration file.
+L3: Regarding require statements on lines 141 and 142, fee values are in percents,
+so it’s safe to use uint8 instead of uint256. This can save litt le gas in combination
+with L4.
+L3 rev. 2: Variables (earlyWithdrawalFee,customFee) were retyped to uint8.
+L4: State variables could have a more optimal ordering to save gas using the variable
+packing (32 bytes). E.g. packing boolean and address values together to save some
+storage.
+L4 rev. 2: The initialization of the variables has been correctly rearranged.
+Medium
+Medium severity issues aren’t security vulnerabilities, but should be clearly clarified
+or fixed.
+ID Description Contract Line Status
+M1 Unlimited allowance GoodGhosting_Polygon_Quic
+kswap.sol
+GoodGhostingBatched.sol
+121
+151
+Deprecated
+M2 Renounce ownership GoodGhosting.sol
+GoodGhostingBatched.sol
+GoodGhosting_Polygon_Quic
+kswap.sol
+16
+17
+19
+Fixed
+M1: Contract sets allowance for a router and a staking pool to uint256 max value.
+This could lead to unlimited drain of funds in case the router or the staking pool
+gets hacked. We recommend sett ing a safer value, maximum which is necessary.
+M1 rev. 2: All contracts addressed by this issue were deleted because they were no
+longer in use.
+M2: Open Zeppelin's Ownable patt ern allows the current owner to renounce the
+ownership of the contract, which could potentially cause inability to call pause(),
+Blockchain audits | Blockchain security assessment
+unpause() and adminFeeWithdraw() methods. We recommend overriding the
+renounceOwnership() method to disable this unwanted feature.
+M2 rev. 2: The issue was correctly fixed by adding an ownership control flag and
+overriding the renounceOwnership() method.
+High
+High severity issues are security vulnerabilities, which require specific steps and
+conditions to be exploited. These issues have to be fixed.
+ID Description Contract Line Status
+H1 First player doesn’t
+receive the bonus
+GoodGhosting_Polygon_Quickswa
+p.sol
+GoodGhostingBatched.sol
+GoodGhostingPolygonBatched.sol
+521
+399
+117
+Deprecated
+H1: First player, who calls the withdraw() method, is responsible for calling
+redeemFromExternalPool() to calculate rewards for all players. But in mentioned
+smart contracts, redeemFromExternalPool() method is called after the player's
+payout calculation, which leads to the following misbehaving situation. In case
+redeemFromExternalPool() would be called independently, before the first
+player calls withdraw(), then this issue would be invalid.
+If the first player, who calls withdraw() is also the winner, then he will not receive
+rewards, because they’re not calculated yet.
+This issue has an easy fix, we suggest moving this block:
+if (!redeemed) {
+redeemFromExternalPool();
+}
+ideally right below this line:
+player.withdrawn = true;
+H1 rev. 2: All contracts addressed by this issue were deleted because they were no
+longer in use.
+Blockchain audits | Blockchain security assessment
+Critical
+Direct critical security threats, which could be instantly misused to att ack the
+system. These issues have to be fixed.
+✓ We haven’t found any critical severity issues.
+5.3 Unit testing
+Provided tests are very well-writt en. Only branch coverage is not fully covered,
+because of ERC20 token transfers/approvals in require statements. Therefore,
+these statements were replaced (for testing purposes) with the assert keyword to
+reveal "real" coverage (98.48%), which is excellent. The resulting table can be viewed
+in Appendix A.
+5.4 Fuzzy testing
+Game mechanics were additionally tested with Echidna. Since time is taking a role in
+a contract, it was quite a challenging task for a fuzzer (with a given scope), so we
+decided at least to test various player count variables for possible misbehaving.
+Overview
+ID Description Contract/Function Result
+F1 There is always less winners than
+activePlayers
+GoodGhosting PASSED
+F2 There is always less activePlayers
+than iterablePlayers
+GoodGhosting PASSED

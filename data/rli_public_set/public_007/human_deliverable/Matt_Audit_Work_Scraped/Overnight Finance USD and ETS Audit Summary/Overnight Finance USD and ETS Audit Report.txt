@@ -1,0 +1,145 @@
+Repository URL: Private repository, commit e7d61fa Files: StrategyUs3UsdcWeth.sol, UniswapV3StakeLibrary.sol, AaveV3BorrowLibrary.sol
+Full commit hash: 0fca062
+========================================================================
+Findings Summary:
+==================
+M1: Missing data validation
+Medium severity issue
+Impact: High Likelihood: Low
+Target: StrategyUs3UsdcWeth Type: Data validation
+Description
+The project does not perform zero-address checks in the setParams function
+and lacks other forms of validation such as allowed ranges for integers.
+Exploit scenario
+By accident, an incorrect value is passed to the setParams function. Instead of
+reverting, the call succeeds.
+Recommendation
+Implement zero-address checks in the setParams function and consider
+adding allowed ranges for variables like poolFee where is not needed to use
+the whole integer range.
+Client’s response
+Acknowledged by the client.
+We not add checks in method setParams because in most cases
+our contracts not have free spaces for these checks. If add
+these checks then we cannot deploy contract to chain. We
+setup params by deploy scripts and CLI tool whise has checks
+for it, also if we need to update these params on exist contract
+then use special test scripts for it.
+===========================================================================
+M2: Usage of deprecated function
+Medium severity issue
+Impact: High Likelihood: Low
+Target: StrategyUs3UsdcWeth,
+UniswapV3StakeLibrary,
+AaveV3BorrowLibrary,
+HedgeStrategy
+Type: Undefined
+behavior
+Description
+The contracts are using one or more functions from the following list:
+• baseToUsd
+• usdToBase
+• sideToUsd
+• usdToSide
+These functions are using the deprecated latestAnswer function from the
+Chainlink aggregator. This function is deprecated and should not be used
+anymore. The latestRoundData function should be used instead.
+The latestAnswer function does not error if no answer has been reached and
+returns 0 or can return stale prices when the API becomes deprecated.
+Exploit scenario
+The latestAnswer function returns 0, as a result, it causes the contracts to
+behave unexpectedly.
+Recommendation
+Replace the deprecated function with the recommended one and add proper
+validation for stale prices (checking answeredInRound against roundId, or
+updatedAt return values) and non-zero values (checking answer return value).
+Fix 1.1
+The latestRoundData function is used instead and there is added validation for
+round completeness, and if the obtained data are fresh according to round id.
+The validation could be even more stringent, especially:
+• checking for positive values:
+require(price > 0, "Negative returned price");
+• checking if the round is not too old:
+require(timeStamp >= block.timestamp - HEARTBEAT_TIME , "Stale price
+feed"); ①
+① where HEARTBEAT_TIME is a constant that is set to a maximum desired
+freshness
+===========================================================================
+M3: Empty receive
+Medium severity issue
+Impact: High Likelihood: Low
+Target: StrategyUs3UsdcWeth Type: Locked Ether
+Description
+The contract contains an empty receive function that allows sending Ether to
+the contract address. However, there is no transfer function to obtain it back.
+Exploit scenario
+Bob sends 1 Ether to the contract address. The contract does not have a
+transfer function, so the Ether is locked forever.
+Recommendation
+If it is not desirable to receive Ether, revert on receive.
+Fix 1.1
+The empty receive function is removed.
+===========================================================================
+W1: Usage of solc optimizer
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Compiler
+configuration
+Description
+The project uses solc optimizer. Enabling solc optimizer may lead to
+unexpected bugs.
+The Solidity compiler was audited in November 2018, and the audit concluded
+that the optimizer may not be safe.
+Vulnerability scenario
+A few months after deployment, a vulnerability is discovered in the optimizer.
+As a result, it is possible to attack the protocol.
+Recommendation
+Until the solc optimizer undergoes more stringent security analysis, opt-out
+using it. This will ensure the protocol is resilient to any existing bugs in the
+optimizer.
+Client’s response
+Acknowledged by the client.
+We tried to remove optimizations, but got a 2-fold increase in
+the size of contracts.
+===========================================================================
+I1: Borrow module is missing implementation for
+claiming rewards
+Impact: Info Likelihood: N/A
+Target: AaveV3BorrowLibrary Type: Missing
+implementation
+Description
+The _claimRewards function in the AaveV3BorrowLibrary library is missing
+implementation. As a result, no rewards can be claimed after calling this
+function.
+Recommendation
+Functions that are not implemented should be removed from the production
+code or should be properly documented why they are not implemented.
+Fix 1.1
+The _claimRewards function is now properly documented.
+===========================================================================
+I2: Documentation
+Impact: Info Likelihood: N/A
+Target: **/* Type: Best practices
+Description
+The NatSpec documentation is missing. Functions should contain for example
+an explanation for function parameters and return values Also there is no
+other low-level documentation that could help to understand the code.
+Recommendation
+Cover all contracts and functions with NatSpec documentation and add
+general documentation for developers and auditors.
+Fix 1.1
+There are significantly more code comments, however, the full NatSpec
+documentation is still missing.
+===========================================================================
+I3: Unused function parameter
+Impact: Info Likelihood: N/A
+Target: StrategyUs3UsdcWeth Type: Dead code
+Description
+The _claimRewards function in the StrategyUs3UsdcWeth contract has an unused
+parameter _to. As a result, any address that is passed does not affect the
+function.
+Recommendation
+Remove the unused parameter or implement it.
+Client’s response
+Acknowledged by the client.
+It’s deprecated param, at the moment it deletion will lead to
+more refactoring, so we take note and get rid of it in the future

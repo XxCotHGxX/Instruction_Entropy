@@ -1,0 +1,111 @@
+========================================================================
+Finding #1: Unhandled return value
+Severity : High
+Description:
+A function call's return value was not handled properly, which could result in unnoticed failures or incorrect behavior in contract execution.
+
+Recommendation:
+Ensure that return values from all function calls, especially external ones, are properly handled and verified.
+
+Repository
+URL: Private Repository – Crosschain-Dex
+========================================================================
+Finding #2: Payload manipulation
+Severity : Low
+Description:
+There exists potential for payload data to be manipulated in a way that could lead to unexpected contract behavior.
+
+Recommendation:
+Validate and sanitize input payloads strictly to prevent exploitation via crafted inputs.
+
+Repository
+URL: Private Repository – Crosschain-Dex
+========================================================================
+Finding #3: Unchecked transfer
+Severity : Low
+Description:
+A token transfer operation does not check for return values, which could result in unexpected token handling or failure to transfer.
+
+Recommendation:
+Always check the return value of token transfers to confirm successful execution.
+
+Repository
+URL: Private Repository – Crosschain-Dex
+========================================================================
+Finding #4: Code duplication
+Severity : Warning
+Description:
+Duplicate blocks of code reduce maintainability and increase the chance of inconsistencies during updates.
+
+Recommendation:
+Refactor common logic into reusable functions or modules to reduce code duplication.
+
+Repository
+URL: Private Repository – Crosschain-Dex
+========================================================================
+Finding #5: Renounce ownership
+Severity : Warning
+Description:
+The use of `renounceOwnership()` might lead to a state where contract administration is lost, which can introduce risks if not intended.
+
+Recommendation:
+Ensure ownership renouncement is deliberate and document clearly when it is safe to use.
+
+Repository
+URL: Private Repository – Crosschain-Dex
+========================================================================
+Finding #6: Missing unit tests
+Severity : Warning
+Description:
+The audit identified a lack of unit tests, which are critical to verifying expected behaviors and preventing regressions.
+
+Recommendation:
+Implement thorough unit tests covering core functionalities and edge cases.
+
+Repository
+URL: Private Repository – Crosschain-Dex
+========================================================================
+Finding #7: External mint function
+Severity : Warning
+Description:
+An external `mint` function can be accessed by unintended actors, depending on access control, posing a risk of token supply manipulation.
+
+Recommendation:
+Restrict access to the mint function using role-based control and document its intended usage.
+
+Repository
+URL: Private Repository – Crosschain-Dex
+========================================================================
+Finding #8: Commented out code
+Severity : Informational
+Description:
+Presence of commented-out code makes the codebase harder to review and may be misleading about current functionality.
+
+Recommendation:
+Remove unused code from the main branch to improve readability and reduce confusion.
+
+Repository
+URL: Private Repository – Crosschain-Dex
+========================================================================
+Finding #9: State variable access
+Severity : Informational
+Description:
+Inconsistent or unnecessary access modifiers on state variables may cause confusion or lead to unintended usage.
+
+Recommendation:
+Apply appropriate visibility modifiers and document the intended use of each variable.
+
+Repository
+URL: Private Repository – Crosschain-Dex
+========================================================================
+Finding #10: Missing code documentation
+Severity : Informational
+Description:
+The code lacks inline comments and function documentation, making it harder to understand and audit.
+
+Recommendation:
+Document all public and critical functions with NatSpec and inline comments where necessary.
+
+Repository
+URL: Private Repository – Crosschain-Dex
+========================================================================

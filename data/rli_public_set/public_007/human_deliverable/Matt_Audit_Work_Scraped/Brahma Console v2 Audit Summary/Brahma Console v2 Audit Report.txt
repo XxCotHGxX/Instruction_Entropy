@@ -1,0 +1,219 @@
+Repository URL: https://github.com/BrahmaFi/console
+Full commit hash: 4589ec4732b4b113673b93436e074042a776fe32
+========================================================================
+Findings Summary:
+==================
+H1: Console permanent denial of service
+High severity issue
+Impact: High Likelihood: Medium
+Target: **/* Type: Denial of service
+Description
+This issue is a combination of the M1 and L1 issues. If the
+SafeModeratorOverridable guard is enabled on a Safe console and the current
+policy is the zero policy, the console account is permanently locked and
+cannot send any transaction.
+Exploit scenario
+A Safe console account is created with the zero policy. The owners of the
+Safe account decide to enforce a new policy. The SafeModeratorOverridable
+guard is enabled on the console. Then, the owners of the console send a
+transaction, changing the policy. However, the transaction reverts as the
+validation fails because the current policy is the zero policy (see L1).
+Furthermore, the guard cannot be disabled because of the issue in the
+TransactionValidator._isGuardBeingRemoved function (see M1).
+Recommendation
+Fix M1 and consider fixing L1 issues.
+Fix 1.1
+Fixed by fixing the issues.
+===========================================================================
+M1: _isGuardBeingRemoved check dysfunctional
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: TransactionValidator Type: Logic error
+Description
+The SafeModeratorOverridable guard can be enabled on a Safe account to
+enforce a custom policy. The guard can be later removed without the active
+policy verification. For this purpose, the TransactionValidator contract
+contains the _isGuardBeingRemoved function to detect a transaction that
+removes the guard.
+function _isGuardBeingRemoved(address _to, uint256 _value, bytes memory
+_data, Enum.Operation _operation)
+  internal
+  view
+  returns (bool)
+{
+  if (msg.sender == _to && _value == 0 && _operation ==
+Enum.Operation.Call) {
+  if (SafeHelper._GUARD_REMOVAL_CALLDATA_HASH == keccak256(_data)) {
+  return true;
+  }
+  }
+  return false;
+}
+The first part of the condition checks that the Safe account performs a call
+to itself to change the guard to the zero address. However, msg.sender is
+never the Safe account because the TransactionValidator contract is not
+directly called by the Safe account but through the SafeModeratorOverridable
+contract.
+TransactionValidator(AddressProviderService._getAuthorizedAddress(_TRANSACT
+ION_VALIDATOR_HASH))
+  .validatePreTransactionOverridable(
+  TransactionValidator.SafeTransactionParams({
+  from: msg.sender,
+  to: to,
+  value: value,
+  data: data,
+  operation: operation,
+  safeTxGas: safeTxGas,
+  baseGas: baseGas,
+  gasPrice: gasPrice,
+  gasToken: gasToken,
+  refundReceiver: refundReceiver,
+  signatures: signatures,
+  msgSender: msgSender
+  })
+);
+As a consequence, the transaction disabling the guard is never detected in
+this function and a trusted validator signature is required. The signature is
+only generated and appended to the transaction if the given transaction
+complies with the current policy. However, disabling the guard may be
+against the policy, depending on the implementation of the trusted validator.
+Furthermore, if the current policy is the zero policy (as described in L1) the
+guard cannot be removed at all and the Safe account is locked forever
+without a possibility to send a transaction.
+Exploit scenario
+The SafeModeratorOverridable guard is enabled on a Safe account. Later, the
+owners of the Safe account decide to remove the guard and send a
+transaction removing the guard. However, the _isGuardBeingRemoved function
+fails to detect the transaction as a guard removal transaction and the
+transaction is rejected if the trusted validator signature is not provided. The
+signature may or may not be provided depending on the implementation of
+the trusted validator.
+Recommendation
+Replace the msg.sender expression in the _isGuardBeingRemoved function with
+the value of the SafeTransactionParams.from field.
+Fix 1.1
+The function was renamed from _isGuardBeingRemoved to
+_isConsoleBeingOverriden and fixed by adding another parameter from to the
+function that is used instead of msg.sender.
+===========================================================================
+L1: Console guard can be enabled with zero policy
+Low severity issue
+Impact: Low Likelihood: Medium
+Target: PolicyValidator, SafeDeployer Type: Data validation
+Description
+The Brahma protocol relies on admin accounts called consoles to manage
+Safe subaccounts with configured policies. The console accounts may be
+EOA or Safe multisig accounts. In the latter case, it is also possible to
+configure and enforce a policy on a console account. However, the
+SafeDeployer contract allows for creation of Safe console accounts with the
+zero policy (the policy is unset).
+function deployConsoleAccount(address[] calldata _owners, uint256
+_threshold, bytes32 _policyCommit, bytes32 _salt)
+  external
+  nonReentrant
+  returns (address _safe)
+{
+  _safe = _createSafe(_owners, _setupConsoleAccount(_owners, _threshold),
+_salt);
+  if (_policyCommit != bytes32(0)) {
+PolicyRegistry(AddressProviderService._getRegistry(_POLICY_REGISTRY_HASH)).
+updatePolicy(
+  _safe, _policyCommit
+  );
+  }
+  emit ConsoleAccountDeployed(_safe);
+}
+The SafeModeratorOverridable contract must be enabled as a guard for a
+console account to enforce a policy on the console account. This is
+performed as a Safe multisig transaction without interactions with the
+Brahma protocol. As a consequence, the SafeModeratorOverridable guard may
+be enabled on a console with zero policy.
+Policies are checked using an external trusted validator and the signature of
+the validator is verified by the PolicyValidator contract. However, this
+contract reverts if the policy is not set (zero policy).
+bytes32 policyHash =
+PolicyRegistry(AddressProviderService._getRegistry(_POLICY_REGISTRY_HASH)).
+commitments(account);
+if (policyHash == bytes32(0)) {
+  revert NoPolicyCommit();
+}
+This effectively causes denial of service for the console account. The only
+workaround is to disable the SafeModeratorOverridable guard, as this
+operation should not require the trusted validator signature. However, as
+described in the H1 issue, the detection of a transaction disabling the guard
+contains a bug, making the denial of service permanent.
+Exploit scenario
+Owners of a Safe console account want to enforce a new policy. The current
+policy is the zero policy. The owners enable the SafeModeratorOverridable
+guard. After that, they want to set the new policy, but the transaction
+reverts because changing a policy requires the signature of the trusted
+validator. The signature is verified by the PolicyValidator contract, but this
+contract reverts because the current policy is not set.
+Recommendation
+Consider requiring a non-zero policy when creating a console account. If this
+is not an option, provide a helper function that enables the
+SafeModeratorOverridable guard and requires a policy to be set.
+Fix 1.1
+The policy commit is passed as a parameter to the deployConsoleAccount
+function and if it is not zero, the policy is updated in the deployment
+transaction. Otherwise, the policy is not updated, because the project wants
+to allow users more flexibility.
+Console allows users to have optional policies on the main safe.
+Users can choose enable policy validation as a feature to enable
+additional security or they can choose to maintian complete
+uninhibited control on their main account.
+===========================================================================
+W1: Authorized addresses can not be
+deauthorized
+Impact: Warning Likelihood: N/A
+Target: WalletRegistry.sol Type: Logic
+Description
+The wallets and subaccounts can be registered but not deregistered. This
+can be potentially an issue in case of some disaster to keep the console
+secure.
+Recommendation
+Ensure this is wanted behavior.
+===========================================================================
+W2: CallType different order than Safe Operation
+Impact: Warning Likelihood: N/A
+Target: Types Type: Code quality
+Description
+The CallType enum in the Types.sol file defines call type enum values in a
+different order than the Operation enum from Safe contracts.
+enum CallType {
+  STATICCALL,
+  DELEGATECALL,
+  CALL
+}
+enum Operation {
+  Call,
+  DelegateCall
+}
+Recommendation
+For consistency, consider changing the order of the CallType members to
+follow the Operation enum order.
+Fix 1.1
+The order was correctly changed.
+===========================================================================
+W3: Registry addresses can not be changed
+Impact: Warning Likelihood: N/A
+Target: AddressProvider.sol Type: Disaster
+recovery
+Description
+Registry addresses can not be changed in AddressProvider. It’s neither good
+nor bad, but it has certain implications.
+Disallowing that strengthens the trust model, since these addresses are
+immutable and can not be changed maliciously. On the other hand, in case of
+some disaster, it blocks potential help for the protocol.
+Recommendation
+Inform users about the implications of the design that leverages the trust
+model.
+===========================================================================
+I1: Outdated documentation
+Impact: Info Likelihood: N/A
+Target: **/* Type: Best practices
+Description
+The project provides up-to-date inlined and repository documentation,
+however, the official documentation is outdated.
+Recommendation
+Update the documentation to match the new version of the protocol.

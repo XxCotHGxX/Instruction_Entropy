@@ -1,0 +1,732 @@
+Repository URL: https://github.com/axelarnetwork
+Full commit hash: 06d90e8
+========================================================================
+Findings Summary:
+==================
+H1: fundAndRunMulticall is not pausable
+High severity issue
+Impact: High Likelihood: Medium
+Target: /packages/squidswap contracts/contracts/SquidRouter.sol
+Type: Logic error
+Listing 1. Excerpt from /packages/squidswap contracts/contracts/SquidRouter.sol#L100-
+L104[SquidRouter.fundAndRunMulticall]
+100 function fundAndRunMulticall(
+101 address token,
+102 uint256 amount,
+103 ISquidMulticall.Call[] memory calls
+104 ) public payable {
+Description
+From the documentation provided, all external and public functions should be
+pausable to be able to stop the contract in case of an emergency. However,
+the fundAndRunMulticall function is not pausable.
+Exploit scenario
+A serious vulnerability in the SquidMulticall is discovered. Before the
+vulnerability is fixed, anyone can call the fundAndRunMulticall function
+because it is not pausable.
+Recommendation
+Either add the whenNotPaused modifier to the fundAndRunMulticall function or
+clarify in the documentation that this function is not pausable.
+Solution (Revision 1.1)
+The whenNotPaused modifier was added to the fundAndRunMulticall function.
+===========================================================================
+M1: Missing Call.callType validation
+Medium severity issue
+Impact: High Likelihood: Low
+Target: /packages/squidswap contracts/contracts/SquidMu
+lticall.sol
+Type: Data validation
+Listing 2. Excerpt from /packages/squidswap contracts/contracts/SquidMulticall.sol#L21-L31[SquidMulticall.run]
+21 if (call.callType == CallType.FullTokenBalance) {
+22 (address token, uint256 amountParameterPosition) =
+  abi.decode(call.payload, (address, uint256));
+23 uint256 amount = IERC20(token).balanceOf(address(this));
+24 _setCallDataParameter(call.callData,
+  amountParameterPosition, amount);
+25 } else if (call.callType == CallType.FullNativeBalance) {
+26 call.value = address(this).balance;
+27 } else if (call.callType == CallType.CollectTokenBalance) {
+28 address token = abi.decode(call.payload, (address));
+29 _safeTransferFrom(token, msg.sender,
+  IERC20(token).balanceOf(msg.sender));
+30 continue;
+31 }
+Description
+The run function does not handle the case where call.callType is not one of
+the expected values.
+Exploit scenario
+A new callType is implemented with the documentation being updated before
+the SquidRouter contract is upgraded. As a result, users send transactions
+with the new callType value, leading to unexpected behavior.
+Recommendation
+Revert the transaction if call.callType is not one of the expected values.
+Solution (Revision 1.1)
+It turned out that the solc compiler already checks for the case where an
+enum type receives through an external call an invalid value.
+===========================================================================
+M2: Missing isContract check in SquidMulticall
+Medium severity issue
+Impact: High Likelihood: Low
+Target: /packages/squidswap contracts/contracts/SquidMu
+lticall.sol
+Type: Data validation
+Listing 3. Excerpt from /packages/squidswap contracts/contracts/SquidMulticall.sol#L33-L34[SquidMulticall.run]
+33 (bool success, bytes memory data) = call.target.call{value:
+  call.value}(call.callData);
+34 if (!success) revert CallFailed(i, data);
+Description
+The success variable will be set to true even if call.target is not a contract.
+Exploit scenario
+A user mistypes an address of a decentralized exchange where he wanted to
+purchase ERC-20 tokens. Ether that would have been used to purchase the
+tokens is sent to a different account than expected. The transaction does
+not revert, resulting in a loss of Ether. Before the user manages to call a
+transaction requesting the Ether back, another user calls the SquidMulticall
+contract and receives the leftover Ether.
+Recommendation
+Add a boolean flag to the Call struct indicating whether the target is a
+contract. If the flag is set to true, check that call.target is a contract before
+performing the external call.
+Solution (Revision 1.1)
+Acknowledged by the client.
+We consider the technical overhead to be able to do such a test
+not worth it. Our sdk/api do such checks. Producing your own
+calldata is at your own risk.
+===========================================================================
+M3: Memory address overflow in_setCallDataParameter
+Medium severity issue
+Impact: High Likelihood: Low
+Target: /packages/squidswap contracts/contracts/SquidMulticall.sol
+Type: Data validation
+Listing 4. Excerpt from /packages/squidswap contracts/contracts/SquidMulticall.sol#L56-
+L65[SquidMulticall._setCallDataParameter]
+56 function _setCallDataParameter(
+57 bytes memory callData,
+58 uint256 parameterPosition,
+59 uint256 value
+60 ) private pure {
+61 assembly {
+62 // 36 bytes shift because 32 for prefix + 4 for selector
+63 mstore(add(callData, add(36, mul(parameterPosition, 32))),
+  value)
+64 }
+65 }
+Description
+The _setCallDataParameter function allows overwriting the callData variable at
+a given position with a 256-bit value. The function does not check if the given
+position is within the bounds of the callData variable. Given the fact that the
+operation is performed in an inline assembly block, this can lead to a memory
+address overflow and overwrite arbitrary memory locations.
+Among vulnerable objects in memory are:
+• selector and prefix parts of the callData variable,
+• address of the next external call to be performed in the run function,
+• free memory pointer at memory location 0x40.
+Overwriting the free memory pointer can lead to memory corruption and
+malformation of any data to be stored in memory.
+Exploit scenario
+A user encodes -1 as a value of the parameterPosition parameter. Because the
+data are encoded using the ABI encoding and interpreted as uint256, the
+mstore instruction is evaluated as:
+mstore(add(callData, add(36, mul(2 ** 256 - 1, 32))), value)
+which is equal to:
+mstore(add(callData, 4), value)
+This effectively overwrites both the prefix part (except the first four bytes)
+and the selector part of the callData variable, leading to unexpected
+behavior.
+Recommendation
+Add a check that the given position is within the bounds of the callData
+variable and does not overwrite the prefix and selector parts.
+Solution (Revision 1.1)
+Acknowledged by the client.
+We consider the only risk to this kind of misusage to be a
+reverted multicall because of bad calldata. Although the only
+data the "attacker" could affect is related to its on transaction
+since it only affects memory. If for some reason an "attacker"
+would like to use this "threat" to change the call data to a
+specific form, they could already provide this altered calldata in
+a default call, resulting in the exact same situation.
+===========================================================================
+M4: Multicall implementation being too generic
+Medium severity issue
+Impact: High Likelihood: Low
+Target: /packages/squidswap contracts/contracts/SquidMu
+lticall.sol
+Type: Data validation
+Listing 5. Excerpt from /packages/squidswap contracts/contracts/SquidMulticall.sol#L12-L42[SquidMulticall.run]
+12 function run(Call[] calldata calls) external payable {
+13 // Prevents reentrancy
+14 if (isRunning) revert AlreadyRunning();
+15 isRunning = true;
+16 
+17 uint256 length = calls.length;
+18 for (uint256 i = 0; i < length; ) {
+19 Call memory call = calls[i];
+20 
+21 if (call.callType == CallType.FullTokenBalance) {
+22 (address token, uint256 amountParameterPosition) =
+  abi.decode(call.payload, (address, uint256));
+23 uint256 amount = IERC20(token).balanceOf(address(this));
+24 _setCallDataParameter(call.callData,
+  amountParameterPosition, amount);
+25 } else if (call.callType == CallType.FullNativeBalance) {
+26 call.value = address(this).balance;
+27 } else if (call.callType == CallType.CollectTokenBalance) {
+28 address token = abi.decode(call.payload, (address));
+29 _safeTransferFrom(token, msg.sender,
+  IERC20(token).balanceOf(msg.sender));
+30 continue;
+31 }
+32 
+33 (bool success, bytes memory data) = call.target.call{value:
+  call.value}(call.callData);
+34 if (!success) revert CallFailed(i, data);
+35 
+36 unchecked {
+37 ++i;
+38 }
+39 }
+40 
+41 isRunning = false;
+42 }
+Description
+Given described a typical scenario in the documentation, the SquidMulticall
+contract implementation is too generic and does not perform any checks to
+ensure that the user cannot lose funds. Especially, it is not verified that:
+• Ether (or the native currency) remaining after all calls are executed is
+returned to the caller (i.e. the SquidMulticall contract does not hold any
+Ether at the end of the transaction),
+• all tokens are sent to the user or the SquidRouter contract (i.e. the
+SquidMulticall contract does not hold any tokens at the end of the
+transaction),
+• up to one type of ERC-20 token is sent to the SquidRouter contract and
+this type of token is the same as the token type to be sent through the
+Axelar Gateway (i.e. the SquidRouter contract does not hold any tokens at
+the end of the transaction).
+Exploit scenario
+Due to faulty off-chain implementation, empty calls variable is passed to the
+SquidMulticall.run function. As a result, any tokens or Ether sent to the
+SquidMulticall contract (via the SquidRouter.fundAndRunMulticall function)
+are left in the contract. Before the user manages to call a transaction
+requesting the Ether or tokens back, another user calls the SquidMulticall
+contract and extracts the leftover Ether or tokens.
+Recommendation
+It is strongly advised to reconsider the current implementation of the
+SquidMulticall contract. If an architectural change is not an option, add
+safety checks for the invariants described in the previous paragraph and fix
+the following issues:
+• M1: Missing Call.callType validation,
+• M2: Missing isContract check in SquidMulticall,
+• M3: Memory address overflow in _setCallDataParameter.
+Solution (Revision 1.1)
+Acknowledged by the client.
+This is part of our design. If users use our sdk/api, that is not a
+risk. Users are free to produce their own calldata or trust
+another producer, but it is at their own risk.
+===========================================================================
+M5: Re-entrancy in SquidRouter
+Medium severity issue
+Impact: Medium Likelihood: Low
+Target: /packages/squidswap contracts/contracts/SquidRouter.sol
+Type: Re-entrancy
+Listing 6. Excerpt from /packages/squidswap contracts/contracts//SquidRouter.sol#L72-
+L82[SquidRouter.callBridgeCall]
+72 function callBridgeCall(
+73 address token,
+74 uint256 amount,
+75 string calldata destinationChain,
+76 string calldata bridgedTokenSymbol,
+77 ISquidMulticall.Call[] calldata sourceCalls,
+78 ISquidMulticall.Call[] calldata destinationCalls,
+79 address refundRecipient,
+80 bool enableForecall
+81 ) external payable whenNotPaused {
+82 fundAndRunMulticall(token, amount, sourceCalls);
+Listing 7. Excerpt from /packages/squidswap contracts/contracts//SquidRouter.sol#L41-L51[SquidRouter.bridgeCall]
+41 function bridgeCall(
+42 string calldata destinationChain,
+43 string calldata bridgedTokenSymbol,
+44 uint256 amount,
+45 ISquidMulticall.Call[] calldata calls,
+46 address refundRecipient,
+47 bool enableForecall
+48 ) external payable whenNotPaused {
+49 address bridgedTokenAddress =
+  gateway.tokenAddresses(bridgedTokenSymbol);
+50 
+51 _safeTransferFrom(bridgedTokenAddress, msg.sender, amount);
+Listing 8. Excerpt from /packages/squidswap contracts/contracts//SquidRouter.sol#L100-
+L114[SquidRouter.fundAndRunMulticall]
+100 function fundAndRunMulticall(
+101 address token,
+102 uint256 amount,
+103 ISquidMulticall.Call[] memory calls
+104 ) public payable {
+105 uint256 valueToSend;
+106 
+107 if (token == address(0)) {
+108 valueToSend = amount;
+109 } else {
+110 _transferTokenToMulticall(token, amount);
+111 }
+112 
+113 squidMulticall.run{value: valueToSend}(calls);
+114 }
+Description
+Assuming that tokens a user owns and/or swaps in the SquidMulticall
+contract cannot be considered trusted, re-entrancy in the SquidRouter
+contract opens up the possibility to extract Ether (or the native currency)
+that would be otherwise used as an Axelar gateway fee.
+Exploit scenario
+The re-entrancy is possible in two different scenarios:
+• a user calls callBridgeCall with a non-zero malicious token address and
+Ether to be paid to the Axelar Gas Service,
+Blockchain audits | Blockchain security assessment
+• _transferTokenToMulticall called from fundAndRunMulticall performs an
+external call to the malicious token address,
+• token calls fundAndRunMulticall with zero token address, amount set to
+address(msg.sender).balance and calls saying to transfer all Ether to the
+malicious token,
+• as a side effect, it is not paid to the Axelar Gas Service, resulting in tokens
+sent to the Axelar Gateway being stuck until the user pays the fee on the
+destination chain.
+The second scenario is as follows:
+• a user calls bridgeCall with Ether to be paid to the Axelar Gas Service,
+• _safeTransferFrom called from bridgeCall performs an external call to the
+malicious bridgedTokenAddress address,
+• the rest of the scenario is the same as above.
+Recommendation
+Add re-entrancy guards to the SquidRouter contract.
+Solution (Revision 1.1)
+Acknowledged by the client.
+We can’t prevent usage of a malicious token. The scenario
+described is very unlikely. As long as users use our sdk/api or
+produce calldata for normal use cases, there is no reason why so
+an issue would arise. For all the rest, we can’t prevent misusage
+of any protocol. We already have a re entrancy guard on the
+multicall contract.
+===========================================================================
+M6: Missing refundRecipient validation
+Medium severity issue
+Impact: High Likelihood: Low
+Target: /packages/squidswap contracts/contracts/SquidRouter.sol
+Type: Data validation
+Description
+Functions bridgeCall and callBridgeCall accept refundRecipient as a
+parameter. However, the value of the parameter is not validated. Given that
+the refundRecipient address is used to transfer funds in case of a revert in
+the SquidMulticall contract on the destination chain, lack of validation may
+lead to loss of funds.
+Exploit scenario
+Due to faulty off-chain implementation, the default value (which is the zero
+address) is passed to the bridgeCall function. The user-defined multicall on
+the destination chain fails and the bridged tokens are transferred to the zero
+address.
+Recommendation
+Add a check that the refundRecipient parameter is not the zero address.
+Solution (Revision 1.1)
+Fixed by adding checks for the zero address.
+===========================================================================
+M7: Missing destinationChain validation
+Medium severity issue
+Impact: High Likelihood: Low
+Target: /packages/squidswap contracts/contracts/SquidRouter.sol
+Type: Data validation
+Description
+Functions bridgeCall, callBridge and callBridgeCall accept destinationChain
+as a parameter. However, the value of the parameter is not validated.
+Additionally, Axelar sendToken and callContractWithToken functions do not
+perform the validation neither. This may lead to loss of funds if the
+destinationChain parameter is set to an invalid value.
+Exploit scenario
+Due to faulty off-chain implementation, the destinationChain parameter is set
+to an invalid value. Because Axelar does not perform any validation of the
+destinationChain parameter neither, the tokens sent to the Axelar gateway
+are burned on the source chain. The tokens are lost as Axelar does not
+support refunds of the tokens sent to an invalid destination chain.
+Recommendation
+Add validation for destinationChain parameters to all functions concerned to
+avoid potential loss of user funds. Axelar documents all supported chain
+names.
+Solution (Revision 1.1)
+Acknowledged by the client.
+Implementing such a validation on chain would significantly
+increase transaction fee. We rely on off chain validation here.
+===========================================================================
+W1: Missing validation of the 0x prefix in string
+addresses
+Impact: Warning Likelihood: N/A
+Target: Axelar
+Utils/contracts/StringAddressUtils.sol
+Type: Data validation
+Listing 9. Excerpt from Axelar
+Utils/contracts/StringAddressUtils.sol#L6-
+L11[StringToAddress.toAddress]
+6 function toAddress(string memory _a) internal pure returns (address)
+  {
+7 bytes memory tmp = bytes(_a);
+8 if (tmp.length != 42) return address(0);
+9 uint160 iaddr = 0;
+10 uint8 b;
+11 for (uint256 i = 2; i < 42; i++) {
+Description
+It is not checked whether the string passed to the toAddress function starts
+with the 0x prefix.
+Recommendation
+Add a check to ensure that the string starts with the 0x prefix.
+Solution (Revision 1.1)
+Fixed by adding check that the string starts with the 0x prefix.
+===========================================================================
+W2: Use of solc optimizer
+Impact: Warning Likelihood: N/A
+Target: **/*.sol Type: Compiler
+configuration
+Description
+Both audited projects use the solc optimizer. Enabling the optimizer may lead
+to unexpected bugs and should be used with caution. More significantly,
+both projects can be compiled with the latest version of the solc compiler
+that may be a subject to new undiscovered bugs.
+The Solidity compiler was audited in November 2018, and the audit concluded
+that the optimizer may not be safe to use in production.
+Recommendation
+Until the solc optimizer becomes more stable and undergoes more stringent
+security analysis, opt-out using it. This will ensure that the contracts are
+resilient to any existing bugs in the optimizer.
+Solution (Revision 1.1)
+Acknowledged by both clients.
+As we couldn’t find any issue or hack caused by the use of the
+optimizer, and as our contracts won’t hold any coins/tokens, we
+consider the usage of the optimizer safe.
+===========================================================================
+W3: Address helper functions not respecting EIP-55
+Impact: Warning Likelihood: N/A
+Target: Axelar
+Utils/contracts/StringAddressUtils.sol
+Type: Standards
+violation
+Description
+EIP-55 defines a checksummed address format using mixed case letters to
+prevent mistyping of addresses. The functions toAddress and toString in
+StringAddressUtils do not respect this standard.
+Recommendation
+It should be either clearly stated in the documentation and NatSpec
+documentation strings that the functions do not respect EIP-55 or the
+functions should implement both EIP-55 checksum verification and
+generation.
+Solution (Revision 1.1)
+Acknowledged by the client.
+We are not encoding EIP-55 checksum as it’s gas expensive.
+===========================================================================
+W4: SquidRouter pausable can be bypassed
+Impact: Warning Likelihood: N/A
+Target: /packages/squidswap contracts/contracts/SquidRouter.sol
+Type: Logic error
+Description
+Given that the SquidRouter contract uses upgradeable proxies, functions
+paused through the proxy contract can still be executed by calling the
+function directly on the implementation contract. Furthermore, the pauser
+address (the address that can pause the contract) can be different when
+calling the function through the proxy contract and when calling the
+function directly on the implementation contract.
+Recommendation
+Either ensure that the fact that the SquidRouter pause ability can be
+bypassed is an expected behavior, or when pausing the SquidRouter contract,
+make sure to call the pause function both on the proxy contract and on the
+implementation contract.
+Solution (Revision 1.1)
+The client acknowledged that the pause function should be called on both the
+proxy and the implementation contract.
+===========================================================================
+I1: Unnecessary abi.encodePacked
+Impact: Info Likelihood: N/A
+Target: Axelar
+Utils/contracts/StringBytesUt
+ils.sol
+Type: Gas optimization
+Listing 10. Excerpt from Axelar
+Utils/contracts/StringBytesUtils.sol#L15-L19[StringToBytes32.toBytes32]
+15 uint256 stringNumber = uint256(bytes32(stringBytes));
+16 
+17 // Storing string length as the last byte of the data
+18 stringNumber |= 0xff & stringBytes.length;
+19 return bytes32(abi.encodePacked(stringNumber));
+Description
+uint256 can be directly converted to bytes32 without using abi.encodePacked.
+Recommendation
+Remove the abi.encodePacked call.
+Solution (Revision 1.1)
+Fixed by removing the abi.encodePacked call.
+===========================================================================
+I2: Multiple calls to pendingPauser
+Impact: Info Likelihood: N/A
+Target: /packages/squidswap contracts/contracts/RoledPausable.sol
+Type: Gas optimization
+Listing 11. Excerpt from /packages/squidswap contracts/contracts/RoledPausable.sol#L33-
+L37[RoledPausable.acceptPauser]
+33 function acceptPauser() external {
+34 if (msg.sender != pendingPauser()) revert NotPendingPauser();
+35 _setPauser(pendingPauser());
+36 PENDING_PAUSER_SLOT.setAddress(address(0));
+37 }
+Description
+The pendingPauser function is called twice in the acceptPauser function, but
+there is no possibility of the pending pauser being set to a different address
+between these two calls.
+Recommendation
+The second call to pendingPauser can be replaced by msg.sender.
+Solution (Revision 1.1)
+Fixed by replacing the second call to pendingPauser with msg.sender.
+===========================================================================
+I3: Bytes length accessed in a for loop condition
+Impact: Info Likelihood: N/A
+Target: Axelar
+Utils/contracts/StringAddress
+Utils.sol
+Type: Gas optimization
+Listing 12. Excerpt from Axelar
+Utils/contracts/StringAddressUtils.sol#L25-
+L35[AddressToString.toString]
+25 bytes memory data = abi.encodePacked(a);
+26 bytes memory characters = '0123456789abcdef';
+27 bytes memory byteString = new bytes(2 + data.length * 2);
+28 
+29 byteString[0] = '0';
+30 byteString[1] = 'x';
+31 
+32 for (uint256 i; i < data.length; ++i) {
+33 byteString[2 + i * 2] = characters[uint256(uint8(data[i] >>
+  4))];
+34 byteString[3 + i * 2] = characters[uint256(uint8(data[i] &
+  0x0f))];
+35 }
+Description
+data.length is accessed in every iteration of the for loop. This is not
+necessary, as the length of the data variable is not modified in the loop.
+Recommendation
+data.length should be stored in a local variable before the loop, and the local
+variable should be used in the loop condition.
+Solution (Revision 1.1)
+Fixed by computing the data length before the loop.
+===========================================================================
+I4: Inconsistent for loop incrementation
+Impact: Info Likelihood: N/A
+Target: Axelar
+Utils/contracts/StringAddress
+Utils.sol
+Type: Code style
+Listing 13. Excerpt from Axelar
+Utils/contracts/StringAddressUtils.sol#L11-
+L11[StringToAddress.toAddress]
+11 for (uint256 i = 2; i < 42; i++) {
+Listing 14. Excerpt from Axelar
+Utils/contracts/StringAddressUtils.sol#L32-
+L32[AddressToString.toString]
+32 for (uint256 i; i < data.length; ++i) {
+Description
+The loop i variable is incremented in the AddressToString.toString function
+using the post-fix syntax i++, while it is incremented using the pre-fix syntax
+++i in the StringToAddress.toAddress function.
+Recommendation
+Libraries in the same project should be consistent in their coding style.
+Solution (Revision 1.1)
+Fixed by using the pre-fix syntax ++i in both functions.
+===========================================================================
+I5: Address code length can be checked before a
+call
+Impact: Info Likelihood: N/A
+Target: /packages/squidswap contracts/contracts/{SquidM
+ulticall.sol, SquidRouter.sol}
+Type: Gas optimization
+Listing 15. Excerpt from /packages/squidswap contracts/contracts/SquidMulticall.sol#L49-
+L53[SquidMulticall._safeTransferFrom]
+49 (bool success, bytes memory returnData) = token.call(
+50 abi.encodeWithSelector(IERC20.transferFrom.selector, from,
+  address(this), amount)
+51 );
+52 bool transferred = success && (returnData.length == uint256(0)
+  || abi.decode(returnData, (bool)));
+53 if (!transferred || token.code.length == 0) revert
+  TransferFailed();
+Listing 16. Excerpt from /packages/squidswap contracts/contracts/SquidRouter.sol#L188-
+L192[SquidRouter._transferTokenToMulticall]
+188 (bool success, bytes memory returnData) = token.call(
+189 abi.encodeWithSelector(IERC20.transferFrom.selector,
+  msg.sender, address(squidMulticall), amount)
+190 );
+191 bool transferred = success && (returnData.length == uint256(0)
+  || abi.decode(returnData, (bool)));
+192 if (!transferred || token.code.length == 0) revert
+  TransferFailed();
+Description
+The token.code.length == 0 check can be performed before the actual call
+reducing the gas cost of the call in case token is not a contract.
+Recommendation
+Check the address code length before the call.
+Solution (Revision 1.1)
+Acknowledged by the client.
+Most of the time, this code will be run with same ERC20
+contract. The implementation of this recommendation would
+increase gas cost for the majority of cases, in order to decrease
+it in a minority of cases.
+===========================================================================
+I6: For loop variable can be incremented in an
+unchecked block
+Impact: Info Likelihood: N/A
+Target: Axelar
+Utils/contracts/StringAddress
+Utils.sol
+Type: Gas optimization
+Listing 17. Excerpt from Axelar
+Utils/contracts/StringAddressUtils.sol#L11-
+L11[StringToAddress.toAddress]
+11 for (uint256 i = 2; i < 42; i++) {
+Listing 18. Excerpt from Axelar
+Utils/contracts/StringAddressUtils.sol#L32-
+L32[AddressToString.toString]
+32 for (uint256 i; i < data.length; ++i) {
+Description
+Given the fact that library functions can be called many times in a single
+transaction, it is important to minimize the gas cost of each call. In this case,
+the for loop i variable can be incremented in an unchecked block to save gas.
+Recommendation
+Consider incrementing the for loop i variable in an unchecked block to save
+gas.
+Solution (Revision 1.1)
+Acknowledged by the client.
+We are not doing unchecked() for better code readability.
+===========================================================================
+I7: Missing NatSpec documentation
+Impact: Info Likelihood: N/A
+Target: **/*.sol Type: Documentation
+Description
+Both audited projects lack NatSpec documentation comments that are
+helpful for developers to understand the code.
+Recommendation
+Add NatSpec documentation to the source code, especially to
+public/external functions and state variables and libraries that are usually
+intended to be used by other contracts.
+Solution (Revision 1.1)
+Acknowledged by both clients.
+We will add NatSpec everywhere at some point.
+We don’t consider full NatSpec commented contracts relevant
+as they are mostly redundant with the code namings. We believe
+they clutter the code base, and are prone to becoming stale and
+misleading as new developers update code, but sometimes fail
+to update the NatSpec.
+We did use some comments to detail parts of the code that are
+not expressive enough by themselves, and provide
+comprehensive documentation for the protocol.
+===========================================================================
+I8: Inconsistent behavior: Revert vs return default
+Impact: Info Likelihood: N/A
+Target: Axelar
+Utils/contracts/{StringAddres
+sUtils.sol,
+StringBytesUtils.sol}
+Type: Code style
+Listing 19. Excerpt from Axelar
+Utils/contracts/StringAddressUtils.sol#L8-L8[StringToAddress.toAddress]
+8 if (tmp.length != 42) return address(0);
+Listing 20. Excerpt from Axelar
+Utils/contracts/StringBytesUtils.sol#L13-L13[StringToBytes32.toBytes32]
+13 if (stringBytes.length == 0 || stringBytes.length > 31) revert
+  InvalidStringLength();
+Description
+The function toAddress returns the zero address if the string is not a valid
+address while the function toBytes32 reverts if the string cannot be stored in
+a bytes32 variable. This behavior should be consistent across the libraries.
+Recommendation
+Revert the transaction if the input string of the toAddress function cannot be
+converted to a valid address.
+Solution (Revision 1.1)
+Fixed by reverting in the toAddress function if the input string cannot be
+converted to an address.
+==============================================================================
+W5: Integrator specific fee validation
+Impact: Warning Likelihood: N/A
+Target: /packages/squidswap contracts/contracts/SquidFe
+eCollector.sol
+Type: Data validation
+Listing 21. Excerpt from /packages/squidswap contracts/contracts/SquidFeeCollector.sol#L57-
+L62[SquidFeeCollector.setSpecificFee]
+57 function setSpecificFee(address integrator, uint256 fee) external
+  onlyOwner {
+58 bytes32 slot = _computeSpecificFeeSlot(integrator);
+59 assembly {
+60 sstore(slot, fee)
+61 }
+62 }
+Listing 22. Excerpt from /packages/squidswap contracts/contracts/SquidFeeCollector.sol#L18-
+L23[SquidFeeCollector.constructor]
+18 constructor(address _squidTeam, uint256 _squidDefaultFee) {
+19 if (_squidTeam == address(0)) revert ZeroAddressProvided();
+20 
+21 squidTeam = _squidTeam;
+22 squidDefaultFee = _squidDefaultFee;
+23 }
+Description
+Specific fee of an integrator being set in the constructor and setSpecificFee
+function is not validated, but it certainly cannot be higher than 10 000
+(100%).
+Recommendation
+Add a condition to the constructor and setSpecificFee function disallowing
+setting a fee higher than 10 000 (100%).
+===========================================================================
+W6: Integrator specific fee cannot be zero
+Impact: Warning Likelihood: N/A
+Target: /packages/squidswap contracts/contracts/SquidFe
+eCollector.sol
+Type: Logic error
+Listing 23. Excerpt from /packages/squidswap contracts/contracts/SquidFeeCollector.sol#L27-
+L36[SquidFeeCollector.collectFee]
+27 function collectFee(
+28 address token,
+29 uint256 amountToTax,
+30 address integratorAddress,
+31 uint256 integratorFee
+32 ) external {
+33 if (integratorFee > 1000) revert ExcessiveIntegratorFee();
+34 
+35 uint256 specificFee = getSpecificFee(integratorAddress);
+36 uint256 squidFee = specificFee == 0 ? squidDefaultFee :
+  specificFee;
+Description
+With zero value used as an indicator that the default fee should be used, an
+integrator specific fee cannot be set to zero.
+Recommendation
+Use a different value (greater than 10 000) to indicate that the zero fee
+should be used for a given integrator.
+===========================================================================
+W7: Maximum integrator fee check can be
+bypassed
+Impact: Warning Likelihood: N/A
+Target: /packages/squidswap contracts/contracts/SquidFe
+eCollector.sol
+Type: Logic error
+Listing 24. Excerpt from /packages/squidswap contracts/contracts/SquidFeeCollector.sol#L27-
+L38[SquidFeeCollector.collectFee]
+27 function collectFee(
+28 address token,
+29 uint256 amountToTax,
+30 address integratorAddress,
+31 uint256 integratorFee
+32 ) external {
+33 if (integratorFee > 1000) revert ExcessiveIntegratorFee();
+34 
+35 uint256 specificFee = getSpecificFee(integratorAddress);
+36 uint256 squidFee = specificFee == 0 ? squidDefaultFee :
+  specificFee;
+37 
+38 uint256 baseFeeAmount = (amountToTax * integratorFee) / 10000;
+Description
+The condition in the collectFee function checks that the integrator fee
+cannot be greater than 1 000 (10%). The only statement where the
+integratorFee variable is used is in line 38, where it is multiplied by the
+amountToTax variable. However, there are no checks for the amountToTax
+variable.
+Exploit scenario
+To effectively use the integrator fee of 2 000 (20%), the integratorFee
+variable can be set to 1 000 (10%) and the value of the amountToTax variable
+can be doubled.
+Recommendation
+Ensure that the value of the amountToTax variable cannot be manipulated to
+bypass the maximum integrator fee check.
+==============================================================================

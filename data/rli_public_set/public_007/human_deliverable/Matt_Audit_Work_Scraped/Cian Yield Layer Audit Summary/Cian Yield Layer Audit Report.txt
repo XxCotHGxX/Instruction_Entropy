@@ -1,0 +1,685 @@
+========================================================================
+Finding #1: Invalid calculations due to intermediary division  
+Severity : Medium  
+Description:  
+Two mulDiv functions are used to calculate the cutPercentage_ value.
+Listing 1. Excerpt from RedeemOperator
+186 if (exchangePrice_ < lastExchangePrice) {
+187 uint256 diff_ = (lastExchangePrice - exchangePrice_).mulDiv(
+188 (IERC20(vault).totalSupply() - totalShares_), PRECISION,
+  Math.Rounding.Ceil
+189 );
+190 cutPercentage_ = diff_.mulDiv(PRECISION * PRECISION, totalShares_ *
+  exchangePrice_, Math.Rounding.Ceil);
+191 }
+Splitting the calculation into two mulDiv functions leads to invalid
+calculations and loss of precision.
+The two formulas used for the calculation can be reduced to one formula
+using a single mulDiv function, thus avoiding intermediary division.
+While both implementations work similarly with high decimal place numbers,
+precision is lost when handling smaller numbers.
+Assuming the following example of Solidity code:
+function test(uint256 totalShares, uint256 withdrawShares, uint256
+exchangePrice, uint256 lastExchangePrice) public pure returns (uint256) {
+  require(exchangePrice < lastExchangePrice, "exchangePrice must be less than
+lastExchangePrice");
+  uint256 diff_ = (lastExchangePrice - exchangePrice).mulDiv(
+  (totalShares - withdrawShares), PRECISION, Math.Rounding.Ceil
+  );
+  uint256 cutPercentage_ = diff_.mulDiv(PRECISION * PRECISION, withdrawShares
+* exchangePrice, Math.Rounding.Ceil);
+  return cutPercentage_;
+}
+function test2(uint256 totalShares, uint256 withdrawShares, uint256
+exchangePrice, uint256 lastExchangePrice) public pure returns (uint256) {
+  return PRECISION.mulDiv(((lastExchangePrice - exchangePrice)*(totalShareswithdrawShares)),
+  (withdrawShares*exchangePrice), Math.Rounding.Ceil);
+}
+and the Python test file for it:
+from wake.testing import *
+from pytypes.tests.mocks.Sandbox import Sandbox
+@chain.connect()
+def test_sandbox():
+  sandbox = Sandbox.deploy()
+  print(f"Two mulDivs: {sandbox.test(50,10,30,40)}")
+  print(f"One mulDiv: {sandbox.test2(50,10,30,40)}")
+The execution produces the following output:
+Two mulDivs: 3333333333333333333333333333333334
+One mulDiv: 1333333333333333334
+Increasing the input parameters for the functions makes the difference
+between the two results smaller.
+sandbox.test(50_000_000,10_000_000,30_000_000,40_000_000)
+sandbox.test2(50_000_000,10_000_000,30_000_000,40_000_000)  
+Two mulDivs: 3333333333333333333334
+One mulDiv: 1333333333333333334
+Increasing the input parameters by another 3 decimals, both functions
+produce the same result.
+Two mulDivs: 1333333333333333334
+One mulDiv: 1333333333333333334
+Two mulDiv functions are used a second time in the same function in this part
+of the code:
+Listing 2. Excerpt from RedeemOperator
+196 uint256 assetPerShare_ = tokenBalanceGet_.mulDiv(PRECISION, totalShares_,
+  Math.Rounding.Floor);
+197 
+198 address thisUser_;
+199 uint256 thisUserGet_;
+200 uint256 gasPerUser_ = _totalGasLimit * tx.gasprice / _users.length;
+201 uint256[] memory amounts_ = new uint256[](_users.length);
+202 for (uint256 i = 0; i < _users.length; ++i) {
+203 thisUser_ = _users[i];
+204 thisUserGet_ = _withdrawalRequest[thisUser_].mulDiv(assetPerShare_,
+  PRECISION, Math.Rounding.Floor);
+The assetPerShare_ value is calculated using a mulDiv function call. Then, for
+each user, the thisUserGet_ value is calculated using the assetPerShare_ value.
+This calculation uses the second mulDiv function. The reduced formula was
+checked with differential fuzzing, and it was discovered that using two mulDiv
+functions causes a loss of precision with more decimal places.
+
+Recommendation
+Avoid using division before multiplication. Simplify the equations and perform
+one mulDiv operation when possible to avoid precision loss or miscalculations. 
+
+Repository URL: https://github.com/cian-studio/yield-contracts/commit/06f333  
+========================================================================
+Finding #2: Pool state variables have insufficient data validation  
+Severity : Medium  
+Description:  
+The initialize function and setter functions for the pool contracts have
+insufficient data validation. While the VaultYieldBasic contract has checks
+for zero values and allowed ranges for state variables, the pool contracts do
+not have any checks for their state variables. As a result, fees can be set
+unreasonably high, and the exchange price can be set to zero, which would
+break the logic due to divisions by zero.
+Listing 3. Excerpt from Pool
+146 shares_ = _amount * PRECISION / getStorage().exchangePrice;
+All passed addresses should be checked for the zero address. For withdrawal
+and deposit fees, there should be checks for the allowed range.
+
+Recommendation
+Add data validation for pool contracts.
+
+Repository URL: https://github.com/cian-studio/yield-contracts/commit/06f333  
+========================================================================
+Finding #3: Users have almost no control over their deposited funds  
+Severity : Medium  
+Description:  
+There are no guarantees for users to claim their funds back when they are
+once deposited into the Vault contract. Users can only request to redeem
+their funds, but they can’t know which amount they will receive back because
+there are several mechanisms that can potentially reduce the amount of
+funds they will receive back. The most important during withdrawals is the
+cutPercentage_ variable that is calculated during calling the withdrawal
+process.
+The privileged account is calling the updateExchangePrice to update the
+exchange ratio between shares and assets. When the exchange price is upto-date then there is no cut percentage.
+Listing 4. Excerpt from RedeemOperator
+175 function confirmWithdrawal(address[] memory _users, uint256 _totalGasLimit)
+  external onlyOperator {
+176 uint256 totalShares_;
+177 for (uint256 i = 0; i < _users.length; ++i) {
+178 if (!_pendingWithdrawers.contains(_users[i])) revert
+  Errors.InvalidWithdrawalUser();
+179 totalShares_ += _withdrawalRequest[_users[i]];
+180 }
+181 uint256 exchangePrice_ = IVault(vault).exchangePrice();
+182 uint256 lastExchangePrice = IVault(vault).lastExchangePrice();
+183 if (lastExchangePrice == 0) revert Errors.UnSupportedOperation();
+184 
+185 uint256 cutPercentage_;  
+186 if (exchangePrice_ < lastExchangePrice) {
+187 uint256 diff_ = (lastExchangePrice - exchangePrice_).mulDiv(
+188 (IERC20(vault).totalSupply() - totalShares_), PRECISION,
+  Math.Rounding.Ceil
+189 );
+190 cutPercentage_ = diff_.mulDiv(PRECISION * PRECISION, totalShares_ *
+  exchangePrice_, Math.Rounding.Ceil);
+191 }
+Essentially, it can be up-to-date all the time, if it will be called twice before
+the withdrawal and not only once. When it is called once and there is a bigger
+difference between the last exchange price and the current price, then the
+cut percentage will be higher. The cut percentage can be as high as 100% and
+even more to cause an underflow error and revert (which is better than the
+execution on high cut percentage for the users).
+When the cut percentage is close to 100% (10^18 == PRECISION), then from
+the following snippet can be seen that amount which is redeemed to be
+distributed to the users can be significantly reduced or even zeroed.
+Listing 5. Excerpt from VaultYieldBasic
+495 uint256 assets_ = previewRedeem(_shares * (PRECISION - _cutPercentage) /
+  PRECISION);
+496 _burn(_owner, _shares);
+Then from the reedemed amount (which can be zero) is calculated asset per
+share end it is evenly distributed to the users based on their shares to
+redeem.
+
+Recommendation
+Reconsider the design decision of the withdrawal process or at least
+implement checks directly in to the code to avoid such huge losses.
+Transaction should be reverted if the loses are too high. Also inform
+adequately the users about the all subtracted amounts during withdrawals
+and risks.  
+
+Repository URL: https://github.com/cian-studio/yield-contracts/commit/06f333  
+========================================================================
+Finding #4: Double entrypoint-initialize functions  
+Severity : Low  
+Description:  
+The LzBridgeArb (and LzBridgeOp, respectively) contract has two initialize
+functions. The first one is defined correctly in LzBridgeArb.sol in the contract
+itself. However, the contract also inherits the second initialize function from
+the LayerZeroBridgeHelper contract. As a result, it is possible to initialize the
+LzBridgeArb (and LzBridgeOp, respectively) contract with both functions.
+Initialization through the inherited function results in an unset Arbitrum
+Outbox parameter.
+Listing 6. Excerpt from LzBridgeArb
+22 function initialize(bytes calldata _initBytes) public initializer {
+23 (address admin_, address operator_, address vault_, address
+  mintAuthority_, address oftWrapper_, address outbox_) =
+  abi.decode(_initBytes, (address, address, address, address, address,
+  address));
+24 __BridgeHelper_init(admin_, vault_, mintAuthority_, operator_, new
+  address[](0));
+25 __LayerZeroBridgeHelperInit(oftWrapper_);
+26 getArbBridgeStorage().outbox = outbox_;
+27 }
+Listing 7. Excerpt from LayerZeroBridgeHelper
+26 function initialize(address _oftWrapper, address _owner, address _vault,
+  address _mintAuthority, address _operator) public virtual initializer {
+27 __BridgeHelper_init(_owner, _vault, _mintAuthority, _operator, new
+  address[](0));
+28 __LayerZeroBridgeHelperInit(_oftWrapper);
+29 }
+
+Recommendation
+Allow only the one correct initialization function to be used.
+
+Repository URL: https://github.com/cian-studio/yield-contracts/commit/06f333  
+========================================================================
+Finding #5: Using transfer instead of call  
+Severity : Low  
+Description:  
+The transfer function in Solidity imposes a 2,300 gas limit on the recipient
+contract. This limitation creates potential transaction failures when the
+recipient contract requires more gas for execution. The call function
+provides a more reliable alternative by allowing flexible gas limits and enabling
+proper return value validation.
+
+Recommendation
+Replace the transfer function with call in the Pool and BridgeHelper
+contracts.
+
+Repository URL: https://github.com/cian-studio/yield-contracts/commit/06f333  
+========================================================================
+L3: Missing initializers on constructors
+Low severity issue
+Impact: Low Likelihood: Low
+Target: * Type: Front-running
+Description
+All upgradeable contracts are missing the initializer modifier or other
+mechanisms to prevent undesired initialization. One scenario occurs when the
+proxy of the logic contract is not created atomically with the initialize
+function call of the logic contract. In this case, an attacker can front-run the
+transaction to gain ownership of the proxy after its creation, forcing the
+deployer to redeploy the proxy.
+Another scenario allows any user to call the initialize function on the logic
+contract and gain ownership of it. While no direct threat was identified from
+this case, there is no reason to allow unrestricted access to this
+functionality.
+
+Recommendation
+Always deploy proxies atomically by calling the initialize function with the
+deployment and use the initializer modifier (or other mechanism) on the
+logic contract’s constructor to prevent undesired initialization.
+===========================================================================================
+L4: Strategy Position Limit Calculation Inaccuracy
+Low severity issue
+Impact: Low Likelihood: Low
+Target: VaultYieldBasic Type: Overflow/Underflow
+Description
+The VaultYieldBasic.transferToStrategy function may incorrectly trigger an
+Errors.InvalidLimit error when the strategy has not reached its specified
+limit. This occurs due to the usage of the totalAssets() function on Line 326:
+Listing 8. Excerpt from VaultYieldBasic
+326 if ((nowAssets_ + transferAsset_) > (totalAssets() * positionLimit_ / 1e4))
+  revert Errors.InvalidLimit();
+The totalAssets() function is implemented as follows:
+Listing 9. Excerpt from VaultYieldBasic
+381 /**
+382 * @dev Retrieve the amount of assets in the strategy pool.
+383 * @return The total assets in the strategy pool.
+384 */
+385 function totalAssets() public view override returns (uint256) {
+386 if (block.timestamp - vaultState.lastUpdatePriceTime >
+  vaultParams.maxPriceUpdatePeriod) {
+387 revert Errors.PriceNotUpdated();
+388 }
+389 
+390 return vaultState.exchangePrice * totalSupply() / PRECISION;
+391 }
+When the price remains fresh but exchangePrice increases due to an increase of underlying assets, the transfer fails if the amount reaches exactly the
+positionLimit_. Since the totalAssets() function uses the exchangePrice to
+calculate the total value of assets, the increase in assets causes the
+difference between totalAssets() and underlyingTvl() to be greater than 0.
+This difference causes the transfer reaching exactly the limit to fail even if
+the strategy has not reached its specified limit.
+Conversely, when the price decreases while remaining fresh, the transfer may
+exceed the specified limit by the same calculation.
+
+Recommendation
+Ensure there is always a small reserve within the limit when transferring
+assets to a strategy, or set the position limit during strategy creation to a
+slightly higher value than the intended limit
+==========================================================================================
+W1: Strict equality check for balances
+Impact: Warning Likelihood: N/A
+Target: OneInchCallerV6.sol Type: Denial of service
+Description
+The OneInchCallerV6 contract uses a strict equality check after swapping for
+ETH balance. This can cause issues when the balance is not exactly as
+expected. For example, when the contract receives additional ETH during the
+call, the transaction will revert.
+Listing 10. Excerpt from OneInchCallerV6
+108 uint256 ethBal_ = address(this).balance;
+109 returnData_ = Address.functionCallWithValue(ONEINCH_ROUTER, _swapData,
+  _amount);
+110 spentAmount_ = ethBal_ - address(this).balance;
+111 returnAmount_ = IERC20(_dstToken).balanceOf(address(this)) - tokenBefore_;
+112 if (spentAmount_ != _amount) revert Errors.OneInchUnexpectedSpentAmount();
+
+Recommendation
+Revert the transaction when the value of spentAmount is bigger than amount.
+===========================================================================================
+W2: Potential depeg of ETH-based assets
+Impact: Warning Likelihood: N/A
+Target: * Type: N/A
+Description
+While the current implementation is using ETH, WETH, and stETH, it can be
+considered reasonably safe against depeg. However, once tokens are
+deposited into pool, the ratio between them is not maintained. Thus, if some
+specific ETH-based asset will be used within the Vault and gets affected by a
+significant price deviation, then it can harm the protocol.
+
+Recommendation
+Be aware of potential depegging when implementing other ETH-based assets
+in the future, and adjust the logic as needed.
+==========================================================================================
+W3: Vault is not ERC4626 compliant
+Impact: Warning Likelihood: N/A
+Target: VaultYieldBasic.sol Type: Standards violation
+Description
+The vault is not fully compliant with the ERC-4626 standard. For example, the
+previewWithdraw and previewRedeem functions are not fee-inclusive, which can
+potentially confuse users. Moreover, the withdraw and redeem functions are
+not available.
+
+Recommendation
+Add proper documentation for these deviations from the standard to inform
+the protocol users.
+===========================================================================================
+W4: Protocol owner can set arbitrary exchange price to pools
+Impact: Warning Likelihood: N/A
+Target: * Type: Trust model
+Description
+The exchange price of the pools is set by the pool owner. This can be either
+abused by the pool owner or provide incorrect amounts for exchanges,
+allowing someone to exploit it.
+
+Recommendation
+Reconsider the design of exchange price settlement in the pools to prevent
+misuse. Ensure that the exchange price is updated promptly to prevent
+unwanted exploitation when withdrawals are allowed.
+===========================================================================================
+W5: Pitfalls of the Ownable contract
+Impact: Warning Likelihood: N/A
+Target: * Type: Data validation
+Description
+The contracts in the codebase use the Ownable contract. The Ownable
+contract is a simple contract that allows the owner to transfer ownership of
+the contract to a new address. This can be done accidentally or intentionally
+to an invalid address, thus causing the contract to lose access to the owner’s
+functions.
+Additionally, the Ownable contract has the renounceOwnership function that
+can be used to renounce ownership of the contract. When this function is
+called, the owner’s functions become unavailable.
+In cases where the owner is always needed for the contract to function, it is
+recommended to use the Ownable2Step contract instead and override the
+renounceOwnership function to revert the transaction. This helps mitigate such
+undesired behavior.
+
+Recommendation
+Use the Ownable2Step (or Ownable2StepUpgradeable) contract instead of the
+Ownable contract, and override the renounceOwnership function to revert the
+transaction.
+==========================================================================================
+W6: Protocol owner can artificially mint Vault shares
+Impact: Warning Likelihood: N/A
+Target: * Type: Trust model
+Description
+The Vault contract has the ability to artificially mint shares to the mint
+authority, which is governed by the protocol owner. This functionality is used
+for providing liquidity for other chains. However, there is no mechanism to
+prevent the protocol owner from minting shares to themselves and
+withdrawing underlying assets.
+
+Recommendation
+Reconsider the design of providing liquidity to other chains to prevent the
+possibility of misuse.
+==========================================================================================
+W7: Underflow can cause DoS in confirmWithdrawal
+Impact: Warning Likelihood: N/A
+Target: RedeemOperator.sol Type: Overflow/Underflow
+Description
+The confirmWithdrawal function in the RedeemOperator contract can cause DoS
+for valid users who want to withdraw their funds. When users want to
+withdraw their funds, they must request a withdrawal by calling
+requestRedeem, where they set how much funds they want to withdraw, and
+then owner must confirm it in the confirmWithdrawal function. The potential
+issue from the confirmWithdrawal function is in this following code snippet:
+Listing 11. Excerpt from RedeemOperator
+200 uint256 gasPerUser_ = _totalGasLimit * tx.gasprice / _users.length;
+201 uint256[] memory amounts_ = new uint256[](_users.length);
+202 for (uint256 i = 0; i < _users.length; ++i) {
+203 thisUser_ = _users[i];
+204 thisUserGet_ = _withdrawalRequest[thisUser_].mulDiv(assetPerShare_,
+  PRECISION, Math.Rounding.Floor);
+205 // If the user's share is not enough to cover the gas, it will fail.
+206 thisUserGet_ -= gasPerUser_;
+Firstly the gasPerUser_ value is computed, it is the average gas cost for the
+user. Then there is computed the thisUserGet_ value which stands for the
+amount of funds the user requested to withdraw. The value thisUserGet_ is
+then reduced by the gasPerUser_ value.
+This mathematical operation can cause an underflow if the gasPerUser_ value
+is higher than the thisUserGet_ value.
+
+Recommendation
+Due to the requirement of subtracting gas, it is hard to avoid this issue
+completely. Minimal withdrawals are an unpleasant constraint for users. It is
+still possible that some gas will be at the expense of the protocol. This can be
+done by setting the _totalGasLimit parameter to a lower or zero value.
+Therefore, it is recommended to perform transaction simulations and set the
+_totalGasLimit parameter to a reasonable value according to the status of
+withdrawals
+===========================================================================================
+W8: Users are not able to request more than one withdrawal
+Impact: Warning Likelihood: N/A
+Target: RedeemOperator.sol Type: Trust model
+Description
+The registerWithdrawal function in the RedeemOperator contract checks if a
+user has already requested a withdrawal. If the user has already requested a
+withdrawal, the function reverts. This mechanism prevents users from
+requesting more than one withdrawal.
+This becomes an issue when users want to request withdrawal of additional
+funds, as they are forced to wait until their first withdrawal is processed.
+
+Recommendation
+Add a possibility for users to request more than one withdrawal.
+===========================================================================================
+W9: Potential issues with retrieving borrow and supply caps
+Impact: Warning Likelihood: N/A
+Target: AaveV3FlashLeverageHelper.sol
+Type: Logic error
+Description
+The contract retrieves borrow and supply caps from Aave. These caps are
+masked with 0x7FFFF, while the full range is 36 bits (0xFFFFFFFFF). This
+masking can cause issues when the caps have higher values. Additionally, the
+contract can return 0 for unlimited caps, and this case should be handled.
+Listing 12. Excerpt from AaveV3FlashLeverageHelper
+67 function getSupplyCap() internal view returns (uint256) {
+68 uint256 totalSupplied_ = IERC20(A_EZETH_AAVEV3).totalSupply();
+69 uint256 configMap_ =
+  POOL_AAVEV3.getReserveData(EZETH).configuration.data;
+70 // Cut out bit 116-151 to get supply cap
+71 return ((configMap_ >> 116) & 0x7FFFF) * 1e18 - totalSupplied_;
+72 }
+73 
+74 function getBorrowCap() internal view returns (uint256) {
+75 uint256 totalBorrowed_ = IERC20(D_WSTETH_AAVEV3).totalSupply();
+76 uint256 configMap_ =
+  POOL_AAVEV3.getReserveData(WSTETH).configuration.data;
+77 // Cut out bit 80-151 to get borrow cap
+78 return ((configMap_ >> 80) & 0x7FFFF) * 1e18 - totalBorrowed_;
+79 }
+
+Recommendation
+Add an appropriate mask and implement proper handling for zero values.
+===========================================================================================
+I1: The function can be declared as a view function
+Impact: Info Likelihood: N/A
+Target: VaultYieldBasic.sol,
+IStrategy.sol
+Type: Code quality
+Description
+The underlyingTvl function can be declared as a view function since it does
+not modify the state.
+Listing 13. Excerpt from VaultYieldBasic
+346 function underlyingTvl() public virtual returns (uint256) {
+To implement this change, the following dependent functions must also be
+declared as view: - the totalStrategiesAssets function called from
+underlyingTvl; - the getNetAssets function in the IStrategy interface, which is
+currently declared as state-changing despite being view in strategy
+implementations.
+Listing 14. Excerpt from IStrategy
+5 function getNetAssets() external returns (uint256);
+
+Recommendation
+Change the functions mutability to view.
+==========================================================================================
+I2: Missing documentation
+Impact: Info Likelihood: N/A
+Target: * Type: Code quality
+Description
+The codebase does not have any up-to-date documentation. While the
+codebase mostly contains NatSpec comments, it would be beneficial to have
+in-repository documentation with described architecture, design decisions,
+specifications and other relevant information, such as user scenarios and
+flows.
+
+Recommendation
+Add documentation and NatSpec code comments for the cross-chain
+contracts in the codebase (PoolArb, LzBridgeArb, …).
+===========================================================================================
+I3: Typos and incorrect NatSpec comments
+Impact: Info Likelihood: N/A
+Target: * Type: Code quality
+Description
+The codebase contains some typos and incorrect NatSpec comments. The
+following code excerpts highlight some of them that were encountered
+during the review.
+Missing comment for _positionLimit parameter:
+Listing 15. Excerpt from StrategyFactory
+85 /**
+86 * @dev Allows the owner to create a new strategy.
+87 * @param _impl The implementation address of the strategy.
+88 * @param _initBytes The initialization parameters for the strategy.
+89 */
+90 function createStrategy(address _impl, bytes calldata _initBytes, uint256
+  _positionLimit) external onlyOwner {
+Missing comment for the _offset parameter and incorrect comment for the
+_newPositionLimit parameter:
+Listing 16. Excerpt from StrategyFactory
+111 /**
+112 * @dev Update the temporary address of shares when users redeem.
+113 * @param _newPositionLimit The new redeem operator address.
+114 */
+115 function updateStrategyLimit(uint256 _offset, uint256 _newPositionLimit)
+  external onlyOwner {
+Missing comment for the _asset parameter:
+Listing 17. Excerpt from RedeemOperator
+55 /**
+56 * @dev Initializes the contract with the vault, operator, fee receiver, and
+  gas parameters.
+57 * @param _vault Address of the vault contract.
+58 * @param _operator Address of the operator.
+59 * @param _feeReceiver Address to receive fees.
+60 */
+61 constructor(address _admin, address _vault, address _asset, address
+  _operator, address _feeReceiver)
+Comment starts with "Then" instead of "The":
+Listing 18. Excerpt from VaultYieldBasic
+76 // Then allowed contract to mint unbacked shares
+77 address public unbackedMinter;
+Incorrect comment for the _token parameter ("deposit" → "withdrawal"):
+Listing 19. Excerpt from VaultYieldBasic
+466 /**
+467 * @dev Redemption operation executed by the redeemOperator. Currently, only
+  STETH and EETH redemptions are supported.
+468 * @param _token The address of the token to deposit.
+469 * @param _shares The amount of share tokens to be redeemed.
+470 * @param _cutPercentage The percentage of the rebalancing loss incurred.
+471 * @param _receiver The address of the receiver of the assets.
+472 * @param _owner The owner address of the shares.
+473 * @return assetsAfterFee_ The amount of assets obtained.
+474 */
+475 function optionalRedeem(address _token, uint256 _shares, uint256
+  _cutPercentage, address _receiver, address _owner)
+Incorrect comment for bits range (should be "80-115"):
+Listing 20. Excerpt from AaveV3FlashLeverageHelper
+77 // Cut out bit 80-151 to get borrow cap
+
+Recommendation
+Fix all typos and update NatSpec comments in the codebase.
+===========================================================================================
+I4: Missing underscore in internal function’s name
+Impact: Info Likelihood: N/A
+Target: * Type: Code quality
+Description
+The following internal functions should start with an underscore to
+distinguish them from external or public functions, ensuring better
+readability.
+• Vault.sol: optionalDepositDeal
+• BridgeHelper.sol: getStorage
+• LayerZeroBridgeHelper.sol: getHelperStorage
+• LzBridgeArb.sol: getArbBridgeStorage
+• LzBridgeOp.sol: getOpBridgeStorage
+• UnbackedMintAuthority.sol: getStorage
+• Pool.sol: getStorage
+• PoolArb.sol: getArbPoolStorage
+• PoolOp.sol: getOpPoolStorage
+• Timelock.sol: getBlockTimestamp
+
+Recommendation
+Add an underscore prefix to all internal function names to follow naming
+conventions.
+===========================================================================================
+I5: Modifier consistency on access controls
+Impact: Info Likelihood: N/A
+Target: VaultYieldBasic.sol Type: Code quality
+Description
+The codebase uses modifiers for access control; however, in some places
+there are inconsistencies, and access controls are checked in different ways.
+These inconsistencies can potentially lead to bugs in future development.
+Therefore, it is better to choose one way of checking access controls and use
+it consistently.
+Listing 21. Excerpt from VaultYieldBasic
+308 function transferToStrategy(address _token, uint256 _amount, uint256
+  _strategyIndex) external {
+309 address caller_ = msg.sender;
+310 if (_strategyIndex == 0) {
+311 if (caller_ != owner() && caller_ != vaultParams.rebalancer) revert
+  Errors.InvalidOperator();
+312 } else {
+313 if (caller_ != owner()) revert Errors.InvalidOperator();
+314 }
+Listing 22. Excerpt from VaultYieldBasic
+475 function optionalRedeem(address _token, uint256 _shares, uint256
+  _cutPercentage, address _receiver, address _owner)
+476 public
+477 override
+478 nonReentrant
+479 whenNotPaused
+480 returns (uint256 assetsAfterFee_)
+481 {
+482 if (!tokens.contains(_token)) revert Errors.InvalidAsset();
+483 if (msg.sender != vaultParams.redeemOperator) revert
+  Errors.UnSupportedOperation();
+Listing 23. Excerpt from VaultYieldBasic
+584 function collectManagementFee() external {
+585 if (msg.sender != vaultParams.feeReceiver) revert
+  Errors.InvalidFeeReceiver();
+Listing 24. Excerpt from VaultYieldBasic
+600 function collectRevenue() external {
+601 if (msg.sender != vaultParams.feeReceiver) revert
+  Errors.InvalidFeeReceiver();
+Listing 25. Excerpt from VaultYieldBasic
+607 function pause() external {
+608 if (msg.sender != owner() && msg.sender != vaultParams.rebalancer)
+  revert Errors.UnSupportedOperation();
+
+Recommendation
+Unify the modifier usage for access control across the codebase.
+==========================================================================================
+I6: Unused variable
+Impact: Info Likelihood: N/A
+Target: AaveV3FlashLeverageHelper.sol
+Type: Code quality
+Description
+The contract contains an unused variable leverageableAmount_ in the code.
+Listing 26. Excerpt from AaveV3FlashLeverageHelper
+103 uint256 leverageableAmount_ = getLeverageableAmount(balance_); // Hold 5%
+  for success rate
+104 leverageableAmount_ = leverageableAmount_ * 95 / 100;
+105 if (leverageableAmount_ > supplyCap_ - balance_) {
+106 leverageableAmount_ = supplyCap_ - balance_;
+107 }
+
+Recommendation
+Utilize or remove the unused variable.
+===========================================================================================
+I7: Unused using-for directives
+Impact: Info Likelihood: N/A
+Target: LayerZeroBridgeHelper.sol,StrategyFactory
+Type: Code quality
+Description
+The contracts contain unused using-for directives. The following code
+excerpts list all of them.
+Listing 27. Excerpt from LayerZeroBridgeHelper
+9 using SafeERC20 for IERC20;
+Listing 28. Excerpt from StrategyFactory
+21 using SafeERC20 for IERC20;
+
+Recommendation
+Remove the unused using-for directives.
+==========================================================================================
+I8: Unused imports
+Impact: Info Likelihood: N/A
+Target: StrategyFactory.sol Type: Code quality
+Description
+The contract contains unused imports. The following code excerpt lists all of
+them.
+Listing 29. Excerpt from StrategyFactory
+8 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+9 import "@openzeppelin/contracts-
+  upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+10 import "../../interfaces/IRedeemOperator.sol";
+
+Recommendation
+Remove the unused imports
+===========================================================================================
+I9: Unused events
+Impact: Info Likelihood: N/A
+Target: StrategyFactory.sol Type: Code quality
+Description
+The contract contains unused events. The following code excerpt
+enumerates all of them.
+Listing 30. Excerpt from StrategyFactory
+36 event UpdateOperator(address oldOperator, address newOperator);
+
+Recommendation
+Remove the unused events or utilize them.
+===========================================================================================
+I10: Unchecked return value for OFT receipt
+Impact: Info Likelihood: N/A
+Target: LzSend.sol Type: Logging
+Description
+The send function in the OFT contract returns a receipt containing crosschain transfer data. This receipt is not captured or logged, which could be
+valuable for logging purposes and user experience improvements.
+Listing 31. Excerpt from LzSend
+27 IOFT(_oftAdapter).send{value: msg.value}(
+28 params_,
+29 fee_,
+30 msg.sender
+31 );
+
+Recommendation
+Capture the receipt data from the external call and emit it in an event.
+===========================================================================================

@@ -1,0 +1,189 @@
+Repository URL: https://github.com/neonlabsorg/neon-evm  
+Full commit hash: 49bd848e08502010f6d5f31aa5cea4dac65eaad7
+========================================================================
+Findings Summary:
+==================
+M1: Selfdestruct early evaluation
+Medium severity issue
+Impact: Medium Likelihood: Low
+Target: state.rs Type: Application logic
+Description
+According to the specification, the selfdestruct(addr) instruction should:
+• transfer all Ether the contract owns to the addr account,
+• mark the contract as "to be deleted",
+• exit the execution context.
+All changes (except the Ether transfer) to the contract must be applied when
+finalizing the transaction, not right after the selfdestruct instruction.
+If the mentioned specification is applied, the functions code, code_size, nonce,
+storage, code_hash, and valids in the state.rs behave incorrectly as all these
+functions must return the same values as if run before selfdestruct (in the
+same transaction).
+Exploit scenario
+Imagine the following contract:
+contract Dummy {
+  uint public state_var;
+  event E();
+  constructor() {
+  state_var = 2;
+  }
+  function emits() public {
+  emit E();
+  }
+  function kill() public {
+  selfdestruct(payable(msg.sender));
+  }
+}
+contract Test {
+  function scenario1(Dummy d) public {
+  d.kill();
+  d.emits(); // does NOT run the `emits` function (but it should)
+  }
+  function scenario2(Dummy d) public returns(uint size){
+  d.kill();
+  assembly {
+  size := extcodesize(d)
+  }
+  // returns zero instead of the code size
+  }
+  function scenario3(Dummy d) public returns(uint) {
+  d.kill();
+  return d.state_var(); // returns 0 instead of 2
+  }
+  function scenario4(Dummy d) public returns(bytes32 hash){
+  d.kill();
+  assembly {
+  hash := extcodehash(d)
+  }
+  // returns keccak256 of an empty array instead of the keccak256
+hash of the code
+  }
+}
+Recommendation
+Remove the Action::EvmSelfDestruct { address } match arms from the code,
+code_size, nonce, storage, code_hash, and valids functions.
+Solution
+The Neon team removed the Action::EvmSelfDestruct { address } match arm
+from all the listed functions. Ackee Blockchain verified the fix.
+===========================================================================
+M2: The emulation of the spl_associated_token_program will not work
+Medium severity issue
+Impact: Low Likelihood: High
+Target: spl_associated_token.rs Type: Application logic
+Description
+The reason behind the wrong functionality is the condition on the first line of
+the emulate function:
+if !instruction.is_empty() {
+  return Err!(...);
+}
+The mistake arises from the upgrade of the spl_associated_token_account
+crate. The older version of the program had only one instruction, and the
+value instruction data was hard-coded as an empty vector (data: vec![]).
+However, the new version has three instructions, and the serialization of
+instruction data look like this: data: instruction.try_to_vec().unwrap(). So to
+serialize the instruction data, the Borsh library is used, i.e., the data vector will
+not be empty anymore. It means that the emulate function will always fail on
+that condition.
+Recommendation
+Either fix the condition to check that the instruction equals the
+AssociatedTokenAccountInstruction::Create or add support for all the
+instructions of the spl_associated_token_program.
+Solution
+The Neon team replaced the broken condition. The emulator now support
+both, an empty instruction data (older version of the
+spl_associated_token_account), and serialized version of the
+AssociatedTokenAccountInstruction::Create instruction data. Ackee Blockchain
+verified the fix.
+===========================================================================
+L1: Precompiled ecrecover behaves incorrectly
+Low severity issue
+Impact: Low Likelihood: Low
+Target: ecrecover.rs Type: Application logic
+Description
+According to specification, the pre-compiled ecrecover contract should:
+• return empty bytes (empty Vec<u8>) in a case of failure (currently returns
+vec![0_u8; 32]),
+• accept less than 128 bytes as input and extend it up to 128 bytes with
+zero bytes from the right (currently fails → returns vec![0_u8; 32]),
+• accept more than 128 bytes and ignore bytes at index 128+ (currently fails
+→ returns vec![0_u8; 32]).
+Recommendation
+Fix the ecrecover contract to behave according to the specification.
+Solution
+The Neon team fixed the ecrecover precompiled contract according to the
+specification. Ackee Blockchain verified the fix.
+===========================================================================
+W1: Differences in the system program emulation
+Impact: Warning Likelihood: N/A
+Target: system.rs Type: Application logic
+Description
+In the SystemInstruction::Transfer emulator, there is no check that the source
+account (i.e., from field) contains any data. So the emulator returns a
+different result than the actual execution. There are no direct ways to misuse
+this behavior; however, the emulation should not end up with a different
+result than the actual execution.
+Recommendation
+Fix the system program emulation to behave exactly as the actual
+implementation.
+Solution
+The Neon team fixed the system program emulation by adding the condition
+checking the emptines of the source transfer account. Ackee Blockchain
+verified the fix.
+===========================================================================
+I1: Redundant account check
+Impact: Info Likelihood: N/A
+Target: sysvar.rs Type: Compute budget
+Description
+The check whether the passed-in account is the Rent account is redundant
+(loc: 29) as the function
+solana_program::sysvar::rent::Rent::from_account_info already checks it, so
+there is no need to do this check explicitly.
+Recommendation
+Remove the redundant check by which one can save some computational
+units.
+Solution
+The code no longer exists.
+===========================================================================
+I2: Unnecessary owner check
+Impact: Info Likelihood: N/A
+Target: account_create.rs Type: Compute budget
+Description
+The EvmInstruction::CreateAccountV02 instruction checks if the passed-in
+code account belongs to the evm_loader program (loc: 51). However, this
+check is unnecessary as the instruction writes to this account. If someone
+provides a wrong account, the runtime will abort the transaction as only the
+owner program can modify the account’s data.
+Recommendation
+Remove the unnecessary check by which one can save some computational
+units.
+Solution
+The code no longer exists.
+===========================================================================
+I3: Unnecessary instruction argument
+Impact: Info Likelihood: N/A
+Target: - Type: Compute budget
+Description
+In the CreateAccountV02 instruction, there is no need to send a bump_seed as the
+find_program_address function calculates the bump. So the calculated bump
+can be used directly without needing to pass in the bump.
+Recommendation
+Remove the bump_seed instruction parameter and use the calculated bump
+instead. By doing so, some computational units can be saved.
+Solution
+The code no longer exists.
+===========================================================================
+I4: Unnecessary holder owner validation
+Impact: Info Likelihood: N/A
+Target: transaction_step_from_acco
+unt.rs
+Type: Compute budget
+Description
+There is no need to validate the owner of a holder account in the
+TransactionStepFromAccount instruction (loc: 56). The owner will be checked in
+the State::new function so there is unnecessary double check of the
+ownership.
+Recommendation
+Remove the unnecessary check by which one can save some computational
+units.
+Solution
+The Neon team decided to not fix this issue and left the extra layer of
+security.

@@ -1,0 +1,127 @@
+body {
+  font-family: "Noto Sans", sans-serif;
+  font-size: 12px;
+  color: #666;
+}
+
+h1 {
+  text-align: center;
+  font-size: 2.5em;
+  text-transform: capitalize;
+}
+
+.ui.dropdown .menu > .item,
+.ui.dropdown .menu .active.item {
+  font-family: "Noto Sans", sans-serif;
+  font-size: 12px;
+  color: #666;
+}
+
+.ui.dropdown .menu {
+  z-index: 900;
+}
+
+#map {
+  height: 400px;
+}
+
+.leaflet-container {
+  background-color: #fff;
+}
+
+.leaflet-control-attribution {
+  display: none;
+}
+
+.map-legend,
+.map-info {
+  background-color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 12px -3px rgba(0, 0, 0, 0.3);
+  padding: 15px;
+}
+
+.map-info {
+  width: 200px;
+  height: 50px;
+}
+
+.legend-title {
+  font-weight: bold;
+}
+
+.legend-scale ul {
+  display: flex;
+  list-style-type: none;
+  margin: 0;
+  padding: 0;
+}
+
+.legend-scale li {
+  display: block;
+  width: 50px;
+  text-align: center;
+}
+
+.legend-scale li span {
+  display: block;
+  width: 50px;
+  height: 16px;
+}
+
+#table {
+  margin: 30px 20px;
+}
+
+thead {
+  display: block;
+}
+
+tbody {
+  display: block;
+  height: 400px;
+  overflow: auto;
+}
+
+th {
+  text-align: left;
+}
+
+td {
+  white-space: nowrap;
+}
+
+.factor-wrapper {
+  background-color: #f2f2f2;
+  border: 1px solid #ddd;
+  display: inline-block;
+  box-sizing: border-box;
+}
+
+.factor-bar {
+  display: inline-block;
+  border-right: 1px solid #f2f2f2;
+  opacity: 0.7;
+  box-sizing: border-box;
+}
+
+#tooltip {
+  position: absolute;
+  background-color: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  pointer-events: none;
+  padding: 10px;
+  z-index: 900;
+  text-align: center;
+  opacity: 0;
+}
+
+#tooltip::after {
+  content: " ";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border-width: 5px;
+  border-style: solid;
+  border-color: rgba(0, 0, 0, 0.7) transparent transparent transparent;
+}

@@ -1,0 +1,502 @@
+Repository URL: https://github.com/IPOR-Labs/ipor-power-tokens
+Full commit hash: c4eeca4
+========================================================================
+Findings Summary:
+==================
+M1: Reclaiming renounced ownership
+Medium severity issue
+Impact: Medium Likelihood: Low
+Target: IporOwnable.sol,
+IporOwnableUpgradeable.sol
+Type: Access control
+Description
+The contracts that implement the ownable pattern implement a 2-step
+process to transfer ownership. In this process, the owner proposes a new
+owner, and the new owner accepts the proposal.
+The ownership can also be renounced. In this case, the owner transfers the
+ownership to the zero address. When renouncing the ownership, it is essential
+to clear the _appointedOwner. This is not done in the current implementation.
+Vulnerability scenario
+The owner appoints a new owner. The appointed owner does not immediately
+accept the ownership; as time progresses, this action is eventually forgotten.
+After some time, the owner renounces the ownership, and the users gain the
+impression that the contract cannot have an owner anymore. However, the
+appointed owner can still accept the ownership and become the contract
+owner. If he does so, he can start to execute any function that the owner can
+execute and break the users' assumptions.
+Recommendation
+Override the renounceOwnership function and clear the _appointedOwner
+variable.
+Fix 1.1
+Fixed.
+===========================================================================
+M2: Renounce ownership risk
+Medium severity issue
+Impact: Medium Likelihood: Low
+Target: **/* Type: Trust model
+Description
+The contracts use Ownable pattern. This pattern allows for renouncing
+ownership to increase decentralization and lower the attack vector. However,
+renouncing ownership at the wrong moment can have harsh consequences.
+For example, it can block the upgradeability process. Therefore it has to be
+used only after careful consideration.
+Recommendation
+Handling the ownership of the contracts should be done with special care. If a
+malicious actor somehow gets access to the role, it can have fatal
+consequences over the protocol. Using multi-sig wallets is a good practice to
+mitigate the risk of losing contract ownership.
+Fix 1.1
+Client’s comment:
+"We are using Gnosi Multisig 4 / 6 with Timelock, so this action also will be
+restricted in this way. We would like to also stay with this option in case when
+this version of IPOR Protocol will not be maintained by DAO or IPOR Labs. In
+case of any Compliance and future regulation in DeFi and blockchain itself."
+===========================================================================
+M3: Non-programatic approach for setting
+constants
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: Constants.sol Type: Code quality
+Description
+The library Constants sets some constants manually as literals. A
+programmatic approach should be preferred.
+library Constants {
+  uint256 public constant MAX_VALUE =
+115792089237316195423570985008687907853269984665640564039457584007913129639
+935;
+  uint256 public constant MAX = type(uint256).max;
+}
+contract C {
+  function test() public {
+  assert(Constants.MAX_VALUE == Constants.MAX);
+  }
+}
+Recommendation
+Use the type(uint256).max expression instead of the literal. This approach
+makes the code more readable and maintainable.
+Fix 1.1
+Fixed.
+===========================================================================
+W1: Usage of solc optimizer
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Compiler
+configuration
+Description
+The project uses solc optimizer. Enabling solc optimizer may lead to
+unexpected bugs.
+The Solidity compiler was audited in November 2018, and the audit concluded
+that the optimizer may not be safe.
+Vulnerability scenario
+A few months after deployment, a vulnerability is discovered in the optimizer.
+As a result, it is possible to attack the protocol.
+Recommendation
+Until the solc optimizer undergoes more stringent security analysis, opt-out
+using it. This will ensure the protocol is resilient to any existing bugs in the
+optimizer.
+Fix 1.1
+Client’s comment:
+"Currently we are using optimizer in already deployed IPOR Protocol smart
+contracts. Liquidity Mining is a part of IPOR Protocol so will be part of public
+repo ipor-protocol where we are using optimizer. We will monitor future issues
+related with Optimizer."
+===========================================================================
+I1: Unnecessary usage of post-inc
+Impact: Info Likelihood: N/A
+Target: LiquidityMining.sol,
+LiquidityMiningInternal.sol,
+PowerIpor.sol
+Type: Gas optimization
+Description
+The project uses post-incrementation inside for loop headers. This is
+unnecessary and semantically identical to pre-incrementation. It is
+recommended to use pre-incrementation instead because it is more gas
+efficient and semantically equivalent
+Locations
+• LiquidityMining.sol/27,
+• LiquidityMiningInternal.sol/79,132,183,248,
+• PowerIpor.sol/125, 154, 186.
+Recommendation
+Replace the post-incrementation with pre-incrementation. Bare in mind that
+this approach cannot be carelessly used in all cases. Sometimes this could
+lead to a program’s semantics change (but this is not the case for the for
+loops).
+Fix 1.1
+Fixed.
+===========================================================================
+I2: Inconsistent definition of iterator variables in
+for loops
+Impact: Info Likelihood: N/A
+Target: LiquidityMiningInternal.sol,
+PowerIpor.sol
+Type: Code quality
+Description
+There are inconsistencies in definitions of the for loop iterator variables.
+Some are defined as uint256 i; and some as uint256 i = 0;. This impairs
+readability.
+Locations
+• LiquidityMiningInternal.sol/248,
+• PowerIpor.sol/186.
+Recommendation
+Pick a unique style and follow it consistently. Because the style of setting
+the value to 0 is more common in the code, it is recommended to use it
+everywhere.
+Fix 1.1
+Fixed.
+===========================================================================
+I3: Variables should be declared as constants
+Impact: Info Likelihood: N/A
+Target: LiquidityMiningInternal.sol Type: Gas optimization
+Description
+The shift functions in LiquidityMiningInternal return a constant-literal value.
+function _getHorizontalShift() internal pure returns (bytes16) {
+  return 0x3fff0000000000000000000000000000;
+}
+function _getVerticalShift() internal pure returns (bytes16) {
+  return 0x3ffd99999999999999e36310e0e2a848;
+}
+Therefore from the semantical standpoint, they behave like constants.
+Recommendation
+Declare the shift variables as constants.
+Fix 1.1
+Client’s comment:
+"This is by design. Here is missing "virtual". We wanted to use that approach
+to have possibility to override that function in ITF Smart Contracts tailored
+for tests which are deployed in private testnets where IPOR Labs use ITF (ITF -
+IPOR Test Framerowk - separate IPOR Labs product for backtesting IPOR
+Protocol models)."
+===========================================================================
+I4: Lack of zero-amount check
+Impact: Info Likelihood: N/A
+Target: LiquidityMining.sol Type: Data validation
+Description
+In LiquidityMining unstake function, there is no check for zero amount input.
+Unstaking zero amount does not cause harm, but it rebalances indicators and
+wastes unnecessary gas.
+Recommendation
+Add a simple requirement, and revert the transaction if zero amount is
+passed.
+Fix 1.1
+Fixed.
+===========================================================================
+I5: Unnecessary use _msgSedner()
+Impact: Info Likelihood: N/A
+Target: **/* Type: Gas optimization
+Description
+Across the project, the abstract contract ContextUpgradable is used. It
+provides view _msgSender() function that returns msg.sender. This approach is
+functional when the function is overridden for some exceptional cases where
+a different address than msg.sender should be returned. However, this
+function is not overridden in the project and is used in the same way as
+msg.sender may be used.
+Recommendation
+Classic msg.sender is realized via one instruction, _msgSender() invokes the
+whole machinery of calling an internal function. If there is no plan to override
+the function, it is recommended to use msg.sender instead of _msgSender() for
+gas efficiency.
+Fix 1.1
+Client’s comment:
+"This is by design. We wanted to use that approach to have possibility to
+override that function in ITF Smart Contracts tailored for tests which are
+deployed in private testnets where IPOR Labs use ITF (ITF - IPOR Test
+Framerowk - separate IPOR Labs product for backtesting IPOR Protocol
+models)."
+===========================================================================
+I6: Confusing function name
+Impact: Info Likelihood: N/A
+Target: PowerIpor.sol Type: Code quality
+Description
+While unstaking from PowerIpor, fifty percent of the staked amount is
+returned to the user. The amount is calculated by the private function
+_calculateAmountWithoutFee. The function’s name may sound confusing and
+indicates that no fee is charged.
+Recommendation
+Rename the function to make it more clear for developers and users. E.g.
+_calculateAmountWithFeeSubtracted.
+Fix 1.1
+Fixed.
+===========================================================================
+I7: Unnecessary variables creation
+Impact: Info Likelihood: N/A
+Target: LiquidityMiningInternal.sol Type: Gas optimization
+Description
+The contract LiquidityMiningInternal contains functions delegatePwIpor,
+delegatePwIporAndStakeIpToken and undelegatePwIpor. Inside these functions is
+a for loop over ipTokens array. In each iteration of the loop, new local
+variables rewardsIteraion and accruedCompMultiplierCumulativePrevBlock are
+created. Creating new variables inside the loops costs additional gas and
+should be avoided.
+Recommendation
+Move the variable creation before the loop cycle and leave only the
+assignment inside the loop.
+Fix 1.1
+Fixed.
+===========================================================================
+I8: Incorrect initialization pattern
+Impact: Info Likelihood: N/A
+Target: LiquidityMiningInternal.sol Type: upgradeability
+Description
+The upgradeable contracts use the _init and _init_unchained functions as
+known from OpenZeppelin upgradeability Those functions are meant to
+initialize the contract state and avoid double initialization. The _init function
+should perform the logic that would typically be done in the constructor
+header, and the _init_unchained should perform the logic that would be done
+in the constructor body.
+Vulnerability scenario
+If the parents init functions are called, and two or more parent contracts
+have a same parent (diamond problem), it can lead to double initialization,
+because the init function of the shared parent would be called multiple
+times. Even though this is not a problem because there is no diamond pattern
+in the inheritance tree, we still consider it necessary to point this out to avoid
+future problems.
+Recommendation
+The _init_unchained function should not perform chaining. The _init function
+should contain linearized calls to the _init_unchained functions of all the
+contracts it derives from. Such an approach assures that double initialization
+will not happen and that all variables will get initialized.
+For an inspiration contracts from OpenZeppelin can be used.
+Fix 1.1
+Fixed.
+===========================================================================
+I9: Usage of memory instead of calldata
+Impact: Info Likelihood: N/A
+Target: LiquidityMiningInternal.sol,
+PowerIpor.sol
+Type: Gas optimization
+Description
+Several functions receive arguments as memory. However, they are only used
+as calldata and can be declared as such. Variable with memory type is stored
+temporarily in memory and can be modified, while calldata is stored in read only memory and cannot be modified. calldata is saved in the cheapest
+memory location.
+The following functions are affected:
+LiquidityMiningInternal
+• delegatePwIpor
+• undelegatePwIpor
+• delegatePwIporAndStakeIpToken
+PowerIpor
+• delegateToLiquidityMining
+• delegateAndStakeToLiquidityMining
+• undelegateFromLiquidityMining
+Recommendation
+Use calldata instead of memory for function arguments for read-only purposes
+because calldata is cheaper to use.
+Fix 1.1
+Fixed.
+===========================================================================
+I10: Reading length of an array in for loop
+Impact: Info Likelihood: N/A
+Target: LiquidityMining.sol,
+LiquidityMiningInternal.sol,
+PowerIpor.sol
+Type: Gas optimization
+Description
+Certain functions in the project loop over an input array. In the loop header,
+there is the classical comparison i < array.length. This approach is more gas
+expensive than storing the length in a dedicated local variable and then
+comparing it against this variable: i < variableStoringLen.
+The following functions are affected:
+LiquidityMining - balanceOfDelegatedPwIpor
+LiquidityMiningInternal - delegatePwIpor - delegatePwIporAndStakeIpToken -
+undelegatePwIpor
+PowerIpor - delegateToLiquidityMining - delegateAndStakeToLiquidityMining
+- undelegateFromLiquidityMining
+Recommendation
+Create one dedicated variable and assign the array length to it. Then use this
+variable in the loop header. Array length will be read only once in a function,
+and some gas will be saved.
+Fix 1.1
+Partly fixed with a client’s comment:
+"In one place - LiquidityMiningInternal.delegatePwIporAndStakeIpToken - we
+stay with array length inside the for statement because of calldata which
+cannot be used together with local variable - because of error "Stack too
+deep". Present changes makes, that gas cost now is lower than before
+changes." Go back to Findings Summary
+===========================================================================
+I11: Redundant use of SafeERC20 library
+Impact: Info Likelihood: N/A
+Target: PowerIpor.sol,
+PowerIporInternal.sol
+Type: Coding practice
+Description
+Some contracts in the codebase use the SafeERC20 library. However, the
+contract interacts only with the project’s Ipor token Therefore, the
+SafeERC20 library is redundant and can be removed because the Ipor token is
+a trusted contract.
+The library is mainly meant for safer interaction with external tokens. Such a
+library is helpful because many tokens deviate from the standard in multiple
+ways (see list of non-standard tokens). The purpose of the SafeERC20 library
+is further discussed at the OpenZeppelin blog.
+Recommendation
+Short term, consider removing the library and measure the gas usage after
+the removal. If the gas usage is significantly different, consider removing the
+library. Long term, be aware that some tokens deviate from the standard and
+may not be fully compatible with the standard. In such cases, the SafeERC20
+library should be used to interact with such tokens.
+Fix 1.1
+Fixed.
+===========================================================================
+I12: Lack of robust contract composition
+Impact: Info Likelihood: N/A
+Target: LiquidityMiningInternal.sol Type: Data validation
+Description
+The project lacks a robust mechanism that could be used for secure contract
+composition. For validation of the contract, only a zero-address check is
+performed. The issue can be seen in LiquidityMiningInternal in the initialize
+function. There is no protection for initializing a random wrong address.
+Recommendation
+The identifier is a robust technique for avoiding mistakes during project
+deployment. Define an original identifier for a contract, such as
+keccak("contractName"), and then check the value during the contract
+composition, making it almost impossible for a wrong address to be accepted.
+Fix 1.1
+Client’s comment:
+"For IpTokens in LiquidityMining we will double check after deployment on
+Mainnet and before start mining rewards if there are correct IP Token
+addresses."
+===========================================================================
+I13: Require should be assert
+Impact: Info Likelihood: N/A
+Target: MiningCalculation.sol Type: Code quality
+Description
+Function calculateAccruedRewards In MiningCalculation contract contains
+require statement that always should be true:
+require(
+  blockNumber >= lastRebalanceBlockNumber,
+  MiningErrors.BLOCK_NUMBER_LOWER_THAN_PREVIOUS_BLOCK_NUMBER
+);
+For function calculateAccountRewards, it works the same for the following
+requirement statement:
+require(
+  accruedCompMultiplierCumulativePrevBlock >=
+accountCompMultiplierCumulativePrevBlock,
+  MiningErrors.ACCOUNT_COMPOSITE_MULTIPLIER_GT_COMPOSITE_MULTIPLIER
+);
+Recommendation
+The asserts provide much more information for reviewers and auditors
+because they convey that the given condition should always be true. Using
+requires is confusing because it implies that the condition could, in some
+cases, revert.
+Fix 1.1
+Client’s comment:
+"We would like to stay with "required" instead "assert" because is more clear
+and fast and easy do debug when error appeared (documented IPOR error
+code will be visible in Etherscan or in frontend console)."
+===========================================================================
+I14: The owner can prevent unstaking from
+LiquidityMining
+Impact: Info Likelihood: N/A
+Target: LiquidityMiningInternal.sol Type: Trust model
+Description
+The owner of the contract LiquidityMiningInternal can prevent users from
+unstaking. The first way to do so is to pause the contract. The second way
+the owner can affect the unstaking is to remove a token by calling the
+function removeIpToken. In unstake function, there is a require that the token
+exists:
+require(_ipTokens[ipToken], MiningErrors.IP_TOKEN_NOT_SUPPORTED);
+The require will always return an error if the owner removes the token. Thus
+the user cannot unstake.
+Recommendation
+This issue can be resolved in multiple ways. Users' staked amount can be
+automatically returned to the user when the token is removed. The owner can
+be prevented from removing tokens when there are users staked.
+Alternatively, add some logic that allows users to unstake removed tokens
+but does not allow for staking them.
+Fix 1.1
+Fixed. User can unstake even if IpToken is no longer supported.
+===========================================================================
+I15: Code duplication
+Impact: Info Likelihood: N/A
+Target: LiquidityMining.sol,
+LiquidityMiningInternal.sol
+Type: Code quality
+Description
+In LiquidityMining contract in function claim, the rewards to be claimed are
+calculated. To calculate them, the following formula is used:
+uint256 accruedCompMultiplierCumulativePrevBlock = MiningCalculation
+  .calculateAccruedCompMultiplierCumulativePrevBlock(
+  block.number,
+  globalIndicators.blockNumber,
+  globalIndicators.compositeMultiplierInTheBlock,
+  globalIndicators.compositeMultiplierCumulativePrevBlock
+  );
+  uint256 iporTokenAmount =
+MiningCalculation.calculateAccountRewards(
+  accountIndicators.ipTokenBalance,
+  accountIndicators.powerUp,
+  accountIndicators.compositeMultiplierCumulativePrevBlock,
+  accruedCompMultiplierCumulativePrevBlock
+  );
+However, this exact formula is also in LiquidityMiningInternal in
+_calculateAccountRewards.
+Recommendation
+A call to the internal function _calculateAccountRewards should be preferred to
+avoid code duplication and increase code readability.
+Fixed.
+===========================================================================
+I16: Comment quality
+Impact: Info Likelihood: N/A
+Target: **/* Type: Code quality
+Description
+Across the project code base, there are some comments with typos or bad
+grammar, which can make the code harder to understand.
+LiquidityMiningTypes, #44
+/// @notive PowerUp is a result of logarythmic equastion defined in
+documentation.
+• grammar - logarithmic
+PowerIpor, #10
+/// Power Ipor smart contract allow you to stake, unstake Ipor Token,
+deletage, undelegate to LiquidityMining Power Ipor Token.
+• grammar - allows
+PowerIpor, #258
+///@dev We can transfer pwIporAmount because is in relation 1:1 to Ipor
+Token
+• grammar - it is
+MiningCalculation, #143
+/// @dev Composit Multiplier Cumulative for Prev Block stored in Account
+structure cannot be greater than the newest accrued global
+Blockchain audits | Blockchain security assessment
+44 of 58
+Blockchain audits | Blockchain security assessment
+/// Composite Multiplier Cumulative for Prev Block
+• a completly redundant comment without no added information about the
+code
+MiningCalculation, #28
+/// @dev Account's staked IP Tokens have to be >= 1
+• redundant
+MiningCalculation, #47
+/// @notice Calculates aggreagated power up based on predefined in
+specification equation.
+• not possible to understand without some context
+Recommendation
+Correct typos, grammatical errors and improve the explanatory value of some
+comments.
+Fix 1.1
+Fixed.
+===========================================================================
+H1: Inability to unstake when the contract runs
+out of rewards
+High severity issue
+Impact: High Likelihood: Medium
+Target: LiquidityMining Type: Contract logic
+Description
+If the contract LiquidityMining run out of rewards, users will be unable to
+withdraw staked tokens. The transaction will fail and revert when the
+contract tries to send the tokens to the PowerIpor contract.
+if (rewards > 0) {
+  _transferRewardsToPowerIpor(msgSender, rewards); // REVERT
+}
+This revert leads to the lock of the user token at a moment when there is not
+enough balance for distributing the rewards.
+Fix 1.2
+A new function to unstake the tokens without the rewards was added. The
+remaining rewards balance is saved in _allocatedPwTokens mapping, from
+which it is possible to claim the rewards later.
+if (rewards > 0) {
+  if (claimRewards) {
+  _transferRewardsToPowerIpor(msgSender, rewards);
+  } else {
+  _allocatedPwTokens[msgSender] += rewards;
+  }
+}
+After this change, users can unstake their tokens without the rewards at any
+time. Moreover, at the same time, they retain the accumulated rewards that
+can be claimed after the rewards are resupplied to the contract.

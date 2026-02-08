@@ -1,0 +1,533 @@
+Repository URL: https://github.com/traderjoe-xyz/joe-core
+Full commit hash: 9ae7edc7a7
+========================================================================
+Findings Summary:
+==================
+H1: BoostedMasterChefJoe may get stuck due to an
+invariant violation
+Impact: High Likelihood: High
+Target: BoostedMasterChefJoe Type: Denial of service
+Description
+Many functions, including withdraw, deposit and pendingTokens, have the
+following expression:
+Listing 1. BoostedMasterChefJoe.sol#L361-L365
+361 uint256 pending = boostedLiquidity
+362 .mul(pool.accJoePerShare)
+363 .div(ACC_TOKEN_PRECISION)
+364 .sub(user.rewardDebt)
+365 .add(claimableJoe[_pid][msg.sender]);
+During our testing, there were many situations where this expression reverted
+at the subtraction step. This would cause a denial of service, making it
+impossible to deposit or withdraw for the user (until boostedLiquidity is large
+enough).
+Exploit scenario
+Given the fuzzing setup we supplied to the Client, here is a sequence that
+triggers this bug:
+lps[2].approve(s.bmcj, 1e18, {'from': alice})
+bmcj.deposit(2, 1e18, {'from': alice})
+# advance time by 1 hour
+chain.sleep(60 * 60)
+chain.mine()
+vejoe.mint(alice, 1e18)
+vejoe.mint(bob, 1e18)
+lps[2].approve(s.bmcj, 0, {'from': bob})
+bmcj.deposit(2, 0, {'from': bob})
+# advance time by 1 hour
+chain.sleep(60 * 60)
+chain.mine()
+bmcj.deposit(2, 0, {'from': alice})
+Recommendation
+Short term, ensure that the above script passes by correcting the
+corresponding arithmetic issue.
+Long term, build on top of the fuzzing model to detect issues such as this
+during testing.
+===========================================================================
+H2: Transferring tokens to BoostedMasterChefJoe
+before first deposit may cause DoS
+Impact: High Likelihood: Medium
+Target: BoostedMasterChefJoe Type: Denial of service
+Listing 2. BoostedMasterChefJoe.sol#L296-L298
+296 function deposit(uint256 _pid, uint256 _amount) external
+  nonReentrant {
+297 harvestFromMasterChef();
+298 updatePool(_pid);
+Listing 3. BoostedMasterChefJoe.sol#L276-L283
+276 function updatePool(uint256 _pid) public {
+277 PoolInfo memory pool = poolInfo[_pid];
+278 if (block.timestamp > pool.lastRewardTimestamp) {
+279 uint256 lpSupply = pool.lpToken.balanceOf(address(this));
+280 if (lpSupply != 0) {
+281 uint256 secondsElapsed = block.timestamp.sub(pool
+  .lastRewardTimestamp);
+282 uint256 joeReward = secondsElapsed.mul(joePerSec()).
+  mul(pool.allocPoint).div(totalAllocPoint);
+283 pool.accJoePerShare = pool.accJoePerShare.add(
+Description
+When BoostedMasterChefJoe.deposit is called, BoostedMasterChefJoe.updatePool
+is called (see Listing 2). If time has elapsed since the last time pool rewards
+were updated and the contract’s lp token balance is non-zero, the contract
+updates pool.accJoePerShare. In that assignment expression, the contract
+divides by pool.totalBoostedAmount (see Listing 3).
+The issue is that it is possible for the preconditions to be true, yet
+pool.totalBoostedAmount be 0. In that case, updatePool will revert, and
+cosequently so will all functions that call it, including:
+• deposit
+• withdraw
+• massUpdatePools
+• updateBoost
+Exploit scenario
+Eve is a malicious user listening to transactions for the deployed
+BoostedMasterChefJoe contract. As soon as she spots a call to add to add a
+new lp token, she procures that token and sends a negligible amount to bmcj.
+As a result, she causes DoS on this token without possibility to remediate it
+by the owner or community.
+Recommendation
+Short term, change the logic of the contract to take into account the
+possibility of malicious actors sending small amounts of tokens to it.
+Long term, make use of (and build on top of) the fuzzing model. This will
+ensure issues like this are identified during testing.
+===========================================================================
+H3: Many components lack data validation
+Impact: High Likelihood: Low
+Target: MoneyMaker,
+StableJoeStaking
+Type: Data validation
+Listing 4. MoneyMaker.constructor
+59 /// @notice Constructor
+60 /// @param _factory The address of JoeFactory
+61 /// @param _bar The address of JoeBar
+62 /// @param _tokenTo The address of the token we want to convert to
+63 /// @param _wavax The address of wavax
+64 constructor(
+65 address _factory,
+66 address _bar,
+67 address _tokenTo,
+68 address _wavax
+69 ) public {
+70 factory = IJoeFactory(_factory);
+71 bar = _bar;
+72 tokenTo = _tokenTo;
+73 wavax = _wavax;
+74 devAddr = msg.sender;
+75 isAuth[msg.sender] = true;
+76 authorized.push(msg.sender);
+77 }
+Listing 5. StableJoeStaking.initialize
+ 96 function initialize(
+ 97 IERC20Upgradeable _rewardToken,
+ 98 IERC20Upgradeable _joe,
+ 99 address _feeCollector,
+100 uint256 _depositFeePercent
+101 ) external initializer {
+102 __Ownable_init();
+103 require(_feeCollector != address(0), "StableJoeStaking: fee
+  collector can't be address 0");
+104 require(_depositFeePercent <= 5e17, "StableJoeStaking: max
+  deposit fee can't be greater than 50%");
+105 
+106 joe = _joe;
+107 depositFeePercent = _depositFeePercent;
+108 feeCollector = _feeCollector;
+109 
+110 isRewardToken[_rewardToken] = true;
+111 rewardTokens.push(_rewardToken);
+112 PRECISION = 1e24;
+113 }
+Description
+Many components in the system lack appropriate data validation such as
+zero-address checks (see Listing 4 and Listing 5). While not a perfect method
+of data validation, zero-address checks are the first line of defense against
+incorrectly supplied input arguments.
+Vulnerability scenario
+Bob is an employee of Trader Joe or a project building on top of Trader Joe.
+He initializes StableJoeStaking, but because of a bug in the scripting library,
+the abi values are incorrectly encoded. As a result, the joe storage variable is
+set to address(0), leading to unintended consequences.
+Recommendation
+Short term, add a zero-address check for all addresses and contracts used as
+inputs to the system.
+Long term, investigate more stringent method of data validation, such as
+through a specific id, to catch even more instances of machine or human
+error.
+===========================================================================
+H4: Renounce ownership
+Impact: High Likelihood: Low
+Target: VeJoeToken Type: Access Control
+Description
+For staking purposes, owner must be set to VeJoeStaking contract address.
+Therefore, renounceOwnership is not potentially useful.
+Exploit scenario
+owner is renounced, and thus users of VeJoeStaking can not claim their veJOE
+or JOE tokens.
+Recommendation
+Override the renounceOwnership method to disable this unwanted feature.
+===========================================================================
+H5: setBoostedMasterChefJoe has insufficient data
+validation
+Impact: High Likelihood: Low
+Target: VeJoeToken Type: Data validation
+Description
+VeJoeToken does not perform any data validation whatsoever of
+_boostedMasterChef in its setBoostedMasterChefJoe function.
+As a consequence of using token hooks (_afterTokenOperation), there is a risk
+that incorrect value can block minting, burning, or cause malicious behavior.
+Exploit scenario
+An incorrect or malicious _boostedMasterChef is passed it. Instead of reverting,
+the call succeeds.
+Recommendation
+Add more stringent data validation for _boostedMasterChef. We recommend
+defining a getter such as contractType() that would return a hash of an
+identifier unique to the (project, contract) tuple (an example would be
+keccak256("Trader Joe: Boosted Master Chef")). This will ensure the call
+reverts for most incorrectly passed values. However, only if they are passed
+by accident. Incorrect values that are passed intentionally can succeed (viz
+Trust Model).
+===========================================================================
+H6: Tokens with callbacks
+Impact: High Likelihood: Low
+Target: /**/* Type: Token
+interaction, Re entrancy
+Listing 6. MoneyMaker._swap#L331
+331 IERC20(fromToken).safeTransfer(address(pair), amountIn);
+Listing 7. MoneyMaker._swap#L351
+351 pair.swap(amount0Out, amount1Out, to, new bytes(0));
+Listing 8. StableJoeStaking.sol#L134-L143
+134 if (_previousAmount != 0) {
+135 uint256 _pending = _previousAmount.mul
+  (accRewardPerShare[_token]).div(PRECISION).sub(
+136 user.rewardDebt[_token]
+137 );
+138 if (_pending != 0) {
+139 safeTokenTransfer(_token, msg.sender, _pending);
+140 emit ClaimReward(msg.sender, address(_token),
+  _pending);
+141 }
+142 }
+143 user.rewardDebt[_token] = _newAmount.mul(accRewardPerShare
+  [_token]).div(PRECISION);
+Description
+There are many situations in the codebase when token transfers are done in
+the middle of a state-changing function (see Listing 6 together with Listing 7,
+or Listing 8). If the tokens transferred have callbacks (e.g. all ERC223 and
+ERC777 tokens), this might create re-entrancy possibilities.
+Exploit scenario
+A token with callbacks is entered as a parameter either to MoneyMaker, either
+as an input to _convert, or as a bridge for another token, or to
+StableJoeStaking as a reward token. As a result, a re-entrancy can be
+executed.
+Recommendation
+Ensure that no tokens with callbacks are added, either:
+• as reward tokens in StableJoeStaking,
+• as LP tokens in MasterChefJoeV2 or BoostedMasterChefJoe,
+• or to be supplied as user input in MoneyMaker.
+This will ensure the system is resilient against re-entrancy attacks.
+===========================================================================
+H7: Usage of solc optimizer
+Impact: High Likelihood: Low
+Target: /**/* Type: Compiler
+configuration
+Description
+The project uses the solc optimizer. Enabling the solc optimizer may lead to
+unexpected bugs.
+The Solidity compiler was audited in November 2018 and the audit concluded
+that the optimizer may not be safe.
+Vulnerability scenario
+A few months after deployment, a vulnerability is discovered in the optimizer.
+As a result, it is possible to attack the protocol.
+Recommendation
+Until the solc optimizer undergoes more stringent security analysis, opt out
+using it. This will ensure the protocol is resilient to any existing bugs in the
+optimizer.
+===========================================================================
+M1: Setting anyAuth to true leads to undefined
+behavior
+Impact: Medium Likelihood: High
+Target: MoneyMaker Type: Access controls
+Listing 9. MoneyMaker.setAnyAuth
+95 function setAnyAuth(bool access) external onlyOwner {
+96 anyAuth = access;
+97 }
+Listing 10. MoneyMaker.onlyAuth
+38 modifier onlyAuth() {
+39 require(isAuth[msg.sender] || anyAuth, "MoneyMaker: FORBIDDEN");
+40 _;
+41 }
+Listing 11. MoneyMaker.setBridge
+102 function setBridge(address token, address bridge) external onlyAuth
+  {
+103 // Checks
+104 require(token != tokenTo && token != wavax && token != bridge,
+  "MoneyMaker: Invalid bridge");
+105 
+106 // Effects
+107 _bridges[token] = bridge;
+108 emit LogBridgeSet(token, bridge);
+109 }
+Description
+MoneyMaker allows the owner to set anyAuth to true (see Listing 9). This
+means anyone can call functions with the onlyAuth modifier (see Listing 10).
+This means that anyone can set bridges (see Listing 11).
+Exploit scenario
+The owner sets anyAuth to true. Mallory can now set a bridge to an untrusted,
+malicious token. Since these tokens are called in the _swap function, this can
+lead to denial of service and re-entrancy attacks.
+Recommendation
+Short term, set the setBridge function to onlyOwner rather than onlyAuth. This
+will ensure that the bridges store is not vulnerable to untrusted user inputs.
+Additionally, consider removing the anyAuth case altogether. Even if bridges
+are not vulnerable, any form of untrusted token input could lead to re entrancy vulnerabilities.
+Long term, avoid patterns where calls are made to addresses supplied by
+untrusted parties. This will prevent re-entrancy attacks.
+===========================================================================
+M3: Renewing boosting period can fail
+Impact: Medium Likelihood: High
+Target: VeJoeStaking Type: Logic fault
+Description
+Users can spend their JOE tokens meaninglessly if they deposit them with the
+thought of extending the boosting period.
+Exploit Scenario
+The user wants to extend his boosted period to earn more veJOE tokens. He
+will do it before the end of the current boosted period, and it will cause he will
+spend JOE tokens without extending it.
+Recommendation
+Remove the first condition in deposit function:
+  if (userInfo.lastRewardTimestamp == 0) {
+  userInfo.boostEndTimestamp = block.timestamp.add
+(boostedDuration);
+  }
+NOTE
+this issue was present in the first revision of the contracts we
+audited (see Executive Summary).
+===========================================================================
+M2: Array lengths are not validated
+Impact: Medium Likelihood: Medium
+Target: MoneyMaker Type: Data validation
+Listing 12. MoneyMaker.convertMultiple
+169 /// @notice Converts a list of pairs of tokens to tokenTo
+170 /// @dev _convert is separate to save gas by only checking the
+  'onlyEOA' modifier once in case of convertMultiple
+171 /// @param token0 The list of addresses of the first token of the
+  pairs that will be converted
+172 /// @param token1 The list of addresses of the second token of the
+  pairs that will be converted
+173 /// @param slippage The accepted slippage, in basis points aka
+  parts per 10,000 so 5000 is 50%
+174 function convertMultiple(
+175 address[] calldata token0,
+176 address[] calldata token1,
+177 uint256 slippage
+178 ) external onlyEOA onlyAuth {
+179 // TODO: This can be optimized a fair bit, but this is safer
+  and simpler for now
+180 require(slippage < 5_000, "MoneyMaker: slippage needs to be
+  lower than 50%");
+181 
+182 uint256 len = token0.length;
+183 for (uint256 i = 0; i < len; i++) {
+184 _convert(token0[i], token1[i], slippage);
+185 }
+186 }
+Description
+There are multiple times when publicly-entrypoints accept multiple arrays as
+parameters. In many cases, there is no check to ensure the lengths are equal
+(see Listing 12).
+Vulnerability scenario
+Due to a bug in a scripting library, Alice’s transaction is encoded with token1
+having more values that token0. The token1 values are never executed, leading
+to unintended consequences.
+Recommendation
+Short term, either add data validation to such cases to ensure that the
+lengths of the arrays are the same, or mark the function as low-level using
+natspec documentation, and create a periphery contract that users are
+expected to interact with.
+Long term, ensure contracts are resilient to human and machine error.
+===========================================================================
+L1: Code duplication in MoneyMaker
+Impact: Low Likelihood: N/A
+Target: MoneyMaker Type: Code duplication
+Listing 13. MoneyMaker.getAmountOut
+379 function getAmountOut(
+380 uint256 amountIn,
+381 uint256 reserveIn,
+382 uint256 reserveOut
+383 ) internal pure returns (uint256 amountOut) {
+384 require(amountIn > 0, "MoneyMaker: INSUFFICIENT_INPUT_AMOUNT");
+385 require(reserveIn > 0 && reserveOut > 0, "MoneyMaker:
+  INSUFFICIENT_LIQUIDITY");
+386 uint256 amountInWithFee = amountIn.mul(997);
+387 uint256 numerator = amountInWithFee.mul(reserveOut);
+388 uint256 denominator = reserveIn.mul(1000).add(amountInWithFee);
+389 amountOut = numerator / denominator;
+390 }
+Listing 14. JoeLibrary.getAmountOut
+63 function getAmountOut(
+64 uint256 amountIn,
+65 uint256 reserveIn,
+66 uint256 reserveOut
+67 ) internal pure returns (uint256 amountOut) {
+68 require(amountIn > 0, "JoeLibrary: INSUFFICIENT_INPUT_AMOUNT");
+69 require(reserveIn > 0 && reserveOut > 0, "JoeLibrary:
+  INSUFFICIENT_LIQUIDITY");
+70 uint256 amountInWithFee = amountIn.mul(997);
+71 uint256 numerator = amountInWithFee.mul(reserveOut);
+72 uint256 denominator = reserveIn.mul(1000).add(amountInWithFee);
+73 amountOut = numerator / denominator;
+74 }
+Description
+The function MoneyMaker.getAmountOut is equivalent to the function
+JoeLibrary.getAmountOut (see Listing 13 and Listing 14). This is code
+duplication that increases maintenance costs and chance of bugs.
+Recommendation
+Short term, use JoeLibrary.getAmountOut in MoneyMaker. If only one function of
+a library is used, the bytecode will be inserted into the calling contract (in
+this case MoneyMaker), so there will be no performance trade-off.
+Long term, avoid code duplication where possible. This will prevent bugs in
+the future.
+===========================================================================
+W1: OpenZeppelin dependencies contain bugs
+Impact: Warning Likelihood: N/A
+Target: /node_modules/@openzeppelin/
+{contracts,contracts upgradeable}
+Type: Dependencies
+Listing 15. package.json’s OpenZeppelin dependencies
+69 "@openzeppelin/contracts": "^3.1.0",
+70 "@openzeppelin/contracts-upgradeable": "3.3.0",
+Description
+Currently, the project uses @openzeppelin/contracts at ^3.1.0 and
+@openzeppelin/contracts-upgradeable at 3.3.0 (see Listing 15). These versions
+are known to have numerous vulnerability, including:
+• Initializer reentrancy may lead to double initialization
+• TimelockController vulnerability in OpenZeppelin Contracts
+We did not find instances of these vulnerabilities in the codebase,
+nevertheless, we would recommend to use the latest dependency versions.
+Recommendation
+Short term, update the dependencies' versions to the latest version (^4.5.0
+as of the this writing). This will ensure fewest possible bugs in the
+dependencies are present.
+Long term, update dependency versions often to ensure the latest version is
+used. Additionally, pay special attention to security advisory banks of
+dependencies.
+===========================================================================
+W2: Front-runnning initialize function
+Impact: Warning Likelihood: N/A
+Target: VeJoeStaking Type: Front-running
+Description
+An attacker can front-run the initialization of a newly created contract and
+call arbitrary functions in it.
+Exploit scenario
+Alice just deployed the contract and wants to call initialize function. Bob
+noticed the deploy and front-runs Alice’s initialization transaction, which will
+give him control over the contract.
+Recommendation
+Add initializer modifier on the constructor in VeJoeStaking or do atomic
+upgrades (contract creation and calling initialize in one transaction).
+===========================================================================
+W3: getPendingVeJoe does not have up to date
+values
+Impact: Warning Likelihood: N/A
+Target: VeJoeStaking Type: Function
+behaviour
+Description
+getPendingVeJoe does not contain a call to updateRewardVars and thus its
+results can be outdated.
+Recommendation
+If getPendingVeJoe needs to be publicly accessible, then add updateRewardVars
+to the function. Otherwise, set it private.
+===========================================================================
+W4: Pre-0.8 solc versions don’t check for
+arithmetic overflow
+Impact: Warning Likelihood: N/A
+Target: /**/* Type: Compiler
+configuration
+Description
+Versions of the solc compiler prior to 0.8.0 do not check for arithmetic
+overflows and underflows of integer types.
+Recommendation
+We recommend using 0.8.0 at minimum, but the newest one is also not
+recommended. A good practice is the latest compiler version roughly 3-6
+months old.
+===========================================================================
+I1: MoneyMaker.authorized keeps old values
+Impact: Informational Likelihood: High
+Target: MoneyMaker Type: Data
+consistency
+Listing 16. MoneyMaker.sol#L79-L90
+79 /// @notice Adds a user to the authorized addresses
+80 /// @param _auth The address to add
+81 function addAuth(address _auth) external onlyOwner {
+82 isAuth[_auth] = true;
+83 authorized.push(_auth);
+84 }
+85 
+86 /// @notice Remove a user of authorized addresses
+87 /// @param _auth The address to remove
+88 function revokeAuth(address _auth) external onlyOwner {
+89 isAuth[_auth] = false;
+90 }
+Description
+MoneyMaker contains state variables isAuth and authorized (a mapping and
+array repectively), which track authorization of addresses to call protected
+functions. When a new address is added, both variables are updated.
+However, when one is removed, authorized never gets updated. This is
+compounded by the fact that authorized is a public variable.
+Vulnerability scenario #1
+A protocol built on top of Trader Joe reads authorized, expecting that it holds
+the current values. This can lead to unintended consequences.
+Vulnerability scenario #2
+A Trader Joe developer is building a new version of this module. He makes an
+authorization check that involves reading from authorized. Old values are
+kept, leading to data inconsistency.
+Recommendation
+Short term, investigate alternative data structures that would allow efficient
+storage of authorized addresses. Examples include implementing linked lists
+using mappings or using OpenZeppelin’s EnumerableSet.
+Long term, avoid pattern with inconsistent data. This will prevent bugs
+further down the line.
+===========================================================================
+I2: Use _msgSender over msg.sender
+Impact: Informational Likelihood: N/A
+Target: /**/* Type: Builtin variables
+Description
+Many contracts, e.g. MoneyMaker, have Context or ContextUpgradeable in
+their inheritance chain. Context and ContextUpgradeable define the
+_msgSender and _msgData functions. This makes it easy to switch their
+semantics, e.g. if Trader Joe decides to support metatransactions in the
+future. If a contract inherits from Context or (or ContextUpgradeable), uses of
+msg.data and msg.sender should be replaced by internal calls to _msgData and
+_msgSender, respectively. This will ensure that if the semantics is changed in
+the future, the codebase will remain consistent.
+Recommendation
+Short term, replace all instances of msg.sender with _msgSender() in the
+contracts that inherit from Context or ContextUpgradeable. This will ensure
+future-proofness against future code changes.
+Long term, ensure that all contracts' code is consistent with the code of their
+inherited contracts.
+===========================================================================
+I3: Log old values in logs
+Impact: Informational Likelihood: High
+Target: /**/* Type: Logging
+Listing 17. MoneyMaker.setBridge
+ 99 /// @notice Force using `pair/bridge` pair to convert `token`
+100 /// @param token The address of the tokenFrom
+101 /// @param bridge The address of the tokenTo
+102 function setBridge(address token, address bridge) external onlyAuth
+  {
+103 // Checks
+104 require(token != tokenTo && token != wavax && token != bridge,
+  "MoneyMaker: Invalid bridge");
+105 
+106 // Effects
+107 _bridges[token] = bridge;
+108 emit LogBridgeSet(token, bridge);
+109 }
+Description
+When logging important state changes, currently the codebase usually logs
+only the new value (see Listing 17). This might make incident analysis and
+other analyses of runtime behavior difficult.
+Recommendation
+Short term, log old values for very important operations such as updating
+implementation pointers. This will ensure the most possible information is
+available for someone analyzing runtime behavior.
+Long term, log any values that on-chain and off-chain observers might be
+interested in. This ensures the maximum transparency of the protocol to its
+users, developers and other stakeholders.

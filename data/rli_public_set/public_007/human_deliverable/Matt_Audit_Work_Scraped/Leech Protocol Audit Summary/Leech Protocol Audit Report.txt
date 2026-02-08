@@ -1,0 +1,1119 @@
+========================================================================
+Finding #1: Lack of atomicity in cross-chain transactions  
+Severity : Critical  
+Description:  
+The Leech protocol enables cross-chain deposits and withdrawals of funds.
+When users initiate a deposit through the crosschainDeposit function, their
+funds are transferred to the LeechRouter contract on the destination chain,
+where they remain pending until the finalizer executes a transaction. This
+non-atomic behavior presents a security risk, as funds temporarily stored in
+the LeechRouter contract balance become vulnerable to exploitation during
+this intermediate state.
+Listing 1. Excerpt from LeechRouter
+926 function _crosschainDeposit(
+927 Request calldata data,
+928 address bridgedToken
+929 ) internal {
+930 if (data.minAmounts.length != 1) revert BadArray();
+931 uint256 chainId = pools[data.poolId].chainId;
+932 // Send tokens to the LeechTransporter
+933 data.token.safeTransferFrom(
+934 _msgSender(),
+935 address(transporter),
+936 data.amount
+937 );
+938 // Bridge tokens
+939 transporter.bridgeOut{value: msg.value}(
+940 address(data.token),
+941 address(bridgedToken),
+942 data.amount,
+943 data.minAmounts[0],
+944 chainId,
+945 routers[chainId]
+946 );
+947 // Notify watchers
+948 emit DepositRequest(
+949 _msgSender(),
+950 data.poolId,
+951 address(data.token),
+952 data.amount,
+953 chainId
+954 );
+955 }
+
+Recommendation:  
+Implement atomic cross-chain transactions by combining the deposit and
+finalization steps into a single transaction.
+
+Repository URL: https://github.com/leechprotocol/contracts/commit/4245d0  
+========================================================================
+Finding #2: Donation attack  
+Severity : High  
+Description:  
+The Leech protocol’s yielding strategies involve providing liquidity to various
+pools. The StrategyVelodromeV3StableFarm contract provides liquidity to
+Velodrome pools using two stable tokens. While liquidity providers typically
+must provide equal values of both tokens, this requirement creates a
+vulnerability to denial-of-service attacks. The vulnerability exists in the
+following implementation:
+Listing 3. Excerpt from StrategyVelodromeV3StableFarm
+426 INonfungiblePositionManager.IncreaseLiquidityParams
+427 memory params = INonfungiblePositionManager.IncreaseLiquidityParams(
+428 NFTPositionId,
+429 USDC.balanceOf(address(this)),
+430 USDT.balanceOf(address(this)),
+431 USDC.balanceOf(address(this)) / 2,
+432 USDT.balanceOf(address(this)) / 2,
+433 block.timestamp
+434 );
+435 (shares, , ) = manager.increaseLiquidity(params);
+The code snippet above shows that StrategyVelodromeV3StableFarm provides
+liquidity to theVelodromeV3 pool using the .balanceOf(address(this)) value.
+This value calculates the amount of tokens to provide to the pool. However,
+the malicious actor can take advantage of this behavior by providing a large
+amount of one token, for example, USDC or USDT. By doing so, the malicious
+actor can cause the manager.increaseLiquidity function to revert, preventing the protocol from providing liquidity to the pool. 
+
+Recommendation:  
+Implement manual calculation of liquidity provision amounts instead of
+relying on the .balanceOf(address(this)) value.
+
+Repository URL: https://github.com/leechprotocol/contracts/commit/4245d0  
+========================================================================
+Finding #3: data.swapperAddress is not checked in the withdraw function  
+Severity : Medium  
+Description:  
+The LeechRouter contract’s withdraw and deposit functions utilize LeechSwapper
+contract for token swaps via KyberSwap when inputted parameter data.token
+differs from data.targetToken. However, the contract fails to validate the
+data.swapperAddress parameter, allowing users to specify arbitrary contract
+addresses that implement the LeechSwapper interface.
+Listing 4. Excerpt from LeechRouter
+266 function deposit(
+267 Request calldata data
+268 )
+269 external
+270 nonReentrant
+271 enabled(_msgSender())
+272 canDeposit(data.poolId)
+273 checkDepositToken(data)
+274 checkChainId(data.poolId, true)
+275 {
+276 _deposit(false, _msgSender(), data);
+277 }
+Listing 5. Excerpt from LeechRouter
+282 function withdraw(
+283 Request calldata data
+284 )
+285 external
+286 nonReentrant  
+287 enabled(_msgSender())
+288 canWithdraw(_msgSender(), data.poolId, data.amount)
+289 checkChainId(data.poolId, true)
+290 {
+291 _withdraw(false, _msgSender(), data);
+Listing 6. Excerpt from ILeechRouter
+52 struct Request {
+53 uint16 poolId;
+54 IERC20Upgradeable token;
+55 IERC20Upgradeable targetToken;
+56 uint256 amount;
+57 uint256[] minAmounts;
+58 bytes[] data;
+59 address swapperAddress;
+60 address externalRouterAddress;
+61 bytes swapData;
+62 }
+
+Recommendation:  
+Implement strict access control for swapper contracts: - maintain a whitelist
+of authorized LeechSwapper contract addresses; - add administrative
+functions to manage the whitelist; and - validate data.swapperAddress against
+the whitelist in withdraw and deposit functions
+
+Repository URL: https://github.com/leechprotocol/contracts/commit/4245d0  
+========================================================================
+Finding #4: Initialization function vulnerable to frontrunning  
+Severity : Medium  
+Description:  
+The implementation of upgradeable contracts behind proxy contracts
+requires three sequential operations:
+1. Contract deployment;
+2. Proxy initialization function call; and
+3. Implementation address update in the proxy contract.
+Without a factory contract to ensure atomicity, these operations expose the
+system to initialization front-running attacks. The following contracts
+contain unprotected initializers:
+• LeechRouter contract
+• LeechSwapper contract
+• StrategyVelodromeV2StableFarm contract
+• StrategyVelodromeV2StableCHIDAIFarm contract
+• StrategyVelodromeV3_USDC_LUSD contract
+• StrategyVelodromeV3_USDC_SDAI contract
+• StrategyVelodromeV3_USDC_SUSD contract  
+• StrategyVelodromeV3StableFarm contract.
+
+Recommendation:  
+To prevent initialization front-running attacks:
+• implement access control modifiers on initialization functions;
+• use proxy__upgradeToAndCall function for atomic upgrades;
+• deploy contracts through factory contracts to ensure atomic
+initialization; and
+• implement initialization status verification in deployment scripts.  
+
+Repository URL: https://github.com/leechprotocol/contracts/commit/4245d0  
+========================================================================
+Finding #5: The strategy.poolShare attribute is not checked properly  
+Severity : Medium  
+Description:  
+The Leech protocol uses the strategy.poolShare value to define the
+percentage allocation of deposited funds across multiple strategies. For
+example, in a pool configured with two strategies and equal fund distribution,
+each strategy’s strategy.poolShare is set to 5,000, totaling 10,000. However,
+the protocol lacks validation for the sum of strategy.poolShare values across
+all strategies in a pool.
+If the sum is less than 10,000, users utilizing LeechSwapper before depositing
+into a multi-strategy pool can experience fund loss.
+Listing 8. Excerpt from LeechRouter
+773 if (data.token != data.targetToken) {
+774 isFinalize
+775 ? base.safeTransfer(data.swapperAddress, data.amount)
+776 : data.token.safeTransferFrom(
+777 user,
+778 data.swapperAddress,
+779 data.amount
+780 );
+781 ILeechSwapper(data.swapperAddress).execute(
+782 data.externalRouterAddress,
+783 address(data.token),
+784 address(data.targetToken),
+785 data.swapData
+786 );
+787 // Replace amounts after swap
+788 data.amount = data.targetToken.balanceOf(address(this));  
+789 // Push true to handle tokens from router instead of user
+790 isFinalize = true;
+791 }
+792 // Deposit into strategies
+793 for (uint256 i = 0; i < pools[data.poolId].strategies.length; i++) {
+794 Strategy memory active = pools[data.poolId].strategies[i];
+795 uint256 amount = (data.amount * active.poolShare) / 1e4;
+Conversely, if the sum exceeds 10,000, the protocol will attempt to deposit
+more funds than the user provided, resulting in transaction reverts.
+Listing 9. Excerpt from LeechRouter
+513 function setPool(
+514 uint16 poolId,
+515 Pool calldata poolData
+516 ) external whenPaused onlyRole(ADMIN_ROLE) {
+517 pools[poolId] = poolData;
+518 emit PoolUpdated(poolId);
+519 }
+
+Recommendation:  
+Implement validation to ensure the sum of strategy.poolShare values across all strategies in a pool equals exactly 10,000.
+
+Repository URL: https://github.com/leechprotocol/contracts/commit/4245d0  
+========================================================================
+Finding #6: No error if there is no bridge configured 
+Severity : Low  
+Description:  
+The BaseLeechTransporter.bridgeOut function in the Leech protocol fails
+silently when no bridge configuration exists. When the activeBridge variable
+is not set, the transaction executes successfully but the user’s tokens
+remain locked in the BaseLeechTransporter contract without being bridged to
+the destination chain.
+Listing 10. Excerpt from BaseLeechTransporter
+124 function bridgeOut(
+125 address _tokenIn,
+126 address _bridgedToken,
+127 uint256 _bridgedAmount,
+128 uint256 _minBridgedAmount,
+129 uint256 _destinationChainId,
+130 address _destAddress
+131 ) external payable override {
+132 // Check if swap is needed
+133 if (_tokenIn != _bridgedToken) {
+134 _bridgedAmount = _swap(
+135 _bridgedAmount,
+136 _minBridgedAmount,
+137 IERC20(_tokenIn),
+138 IERC20(_bridgedToken)
+139 );
+140 }
+141 
+142 // Check active crosschain service and call internal funcion
+143 if (activeBridge == Bridge.MULTICHAIN_V6) {
+144 _bridgeOutMultichain(
+145 _bridgedToken,
+146 _bridgedAmount,
+147 _destinationChainId,
+148 _destAddress
+149 );
+150 return;
+151 }
+152 if (activeBridge == Bridge.STARGATE) {
+153 _bridgeOutStargate(
+154 _bridgedToken,
+155 _bridgedAmount,
+156 _destinationChainId,
+157 _destAddress
+158 );
+159 return;
+160 }
+161 } 
+
+Recommendation:  
+Implement a validation check in the bridgeOut function to verify bridge
+configuration. The transaction should revert if no active bridge exists
+
+Repository URL: https://github.com/leechprotocol/contracts/commit/4245d0
+========================================================================
+L2: Pool Configuration Data Can Be Overwritten
+Low severity issue
+Impact: Low Likelihood: Low
+Target: LeechRouter.sol Type: Logic error
+Description
+The Leech protocol stores pool information including total token amounts
+and strategy addresses. The protocol administrator can accidentally
+overwrite existing pool data when configuring new pools, leading to incorrect
+accounting of token amounts and strategy addresses.
+Listing 11. Excerpt from LeechRouter
+513 function setPool(
+514 uint16 poolId,
+515 Pool calldata poolData
+516 ) external whenPaused onlyRole(ADMIN_ROLE) {
+517 pools[poolId] = poolData;
+518 emit PoolUpdated(poolId);
+519 }
+
+Recommendation
+Implement a validation check to verify if a pool exists before allowing
+configuration of a new pool.
+=========================================================================================
+L3: Oracle Price Feed Data Validation Missing
+Low severity issue
+Impact: Medium Likelihood: Low
+Target: BaseStrategy.sol Type: Data validation
+Description
+The Leech protocol utilizes Chainlink price feed oracles without implementing
+proper data validation mechanisms. The oracle’s last update timestamp is not
+verified during price retrieval, which may result in accounting errors due to
+stale price data.
+Listing 12. Excerpt from BaseStrategy
+113 share =
+114 (depositToken.balanceOf(address(this)) *
+115 uint256(oracles[depositToken].latestAnswer())) /
+116 10 ** (decimals[depositToken]);
+
+Recommendation
+Implement robust oracle data validation:
+• replace the deprecated AggregatorV3Interface.latestAnswer function with
+AggregatorV3Interface.latestRoundData;
+• implement heartbeat verification against a predefined maximum delay
+(MAX_DELAY);
+• configure the MAX_DELAY variable based on the specific oracle’s update
+frequency; and
+• verify the timestamp of the latest price update to prevent the usage of
+stale data.
+=========================================================================================
+L4: External interaction with Chainlink is not appropriately handled
+Low severity issue
+Impact: Medium Likelihood: Low
+Target: BaseStrategy.sol Type: Data validation
+Description
+The Leech protocol relies on Chainlink’s price feed functions to obtain the
+latest price data. These functions can revert if the Chainlink node becomes
+unavailable. Consequently, the Leech protocol’s deposit transactions will fail
+due to their dependency on price data.
+Listing 13. Excerpt from BaseStrategy
+113 share =
+114 (depositToken.balanceOf(address(this)) *
+115 uint256(oracles[depositToken].latestAnswer())) /
+116 10 ** (decimals[depositToken]);
+
+Recommendation
+Implement a defensive approach when querying Chainlink price feeds by
+using Solidity’s try/catch structure. This implementation ensures that if the
+price feed call fails, the contract maintains control and handles errors
+explicitly and safely.
+=========================================================================================
+L5: Two step ownership is not used
+Low severity issue
+Impact: Medium Likelihood: Low
+Target: BanList.sol, Rewarder.sol,
+BaseLeechTransporter.sol,
+BaseStrategy.sol
+Type: Access control
+Description
+The BanList, Rewarder, BaseLeechTransporter, and BaseStrategy contracts
+implement ownership transfer using the transferOwnership function, which
+directly assigns the new owner’s address. This implementation poses a
+security risk as an incorrectly provided address cannot be reversed,
+potentially resulting in permanent loss of contract control.
+
+Recommendation
+Implement the Ownable2StepUpgradeable abstract contract instead of
+OwnableUpgradeable. This implementation requires a two-step ownership
+transfer process: - the current owner initiates the transfer; and - the new
+owner must accept the ownership.
+This approach prevents accidental transfers to incorrect addresses.
+========================================================================================
+W1: Usage of transfer instead of call
+Impact: Warning Likelihood: N/A
+Target: LeechRouter.sol Type: Standards
+violation
+Description
+The LeechRouter contract uses the transfer function to send ETH to the
+finalizer. This deprecated function will cause transaction failures in the
+following scenarios:
+• the finalizer smart contract lacks a payable function;
+• the finalizer smart contract implements a payable fallback function that
+consumes more than 2,300 gas units; and
+• the finalizer smart contract implements a payable fallback function
+requiring less than 2,300 gas units but is invoked through a proxy
+contract, causing the total gas consumption to exceed 2,300 units.
+Furthermore, certain multisig wallet implementations require gas limits
+exceeding 2,300 units for successful execution.
+
+Recommendation
+Replace the transfer function with the call function to send ETH to the
+finalizer address.
+=========================================================================================
+W2: Direct Token Balance Checks Using balanceOf(address(this)) Present Security Risks
+Impact: Warning Likelihood: N/A
+Target: LeechRouter.sol Type: Code quality
+Description
+The Leech protocol codebase contains multiple instances where token
+balances are checked using .balanceOf(address(this)). Direct balance checks
+can lead to accounting discrepancies when assets are transferred outside
+the protocol’s intended logic. While this practice does not introduce
+immediate vulnerabilities, it may facilitate the exploitation of other protocol
+issues, as detailed in the C1 finding.
+There are multiple instances of .balanceOf(address(this)) usage in the
+codebase which we consider the most problematic:
+Listing 14. Excerpt from LeechRouter
+738 uint256 swappedBalance = data.targetToken.balanceOf(address(this));
+Listing 15. Excerpt from LeechRouter
+226 if (
+When the LeechRouter contract holds undistributed tokens, a malicious user
+could potentially deposit these tokens on behalf of themselves.
+Listing 16. Excerpt from LeechRouter
+863 ILeechSwapper(data.swapperAddress).execute(
+
+Recommendation
+Calculate precise token amounts required for transfers before executing the
+transfer operation.
+For specific cases, such as the code below, the token amount can be
+obtained from the return value of the
+VELODROME_ROUTER.swapExactTokensForTokens function:
+Listing 17. Excerpt from StrategyVelodromeV2StableFarm
+251 VELODROME_ROUTER.swapExactTokensForTokens(
+Listing 18. Excerpt from StrategyVelodromeV2StableFarm
+260 VELODROME_ROUTER.swapExactTokensForTokens(
+=========================================================================================
+W3: Getter of pools does not return all members of a complex struct
+Impact: Warning Likelihood: N/A
+Target: LeechRouter.sol Type: Code quality
+Description
+The pools state variable is a mapping of uint16 to Pool struct. The Solidity
+compiler automatically generates a getter function that cannot return the
+strategies array member of the Pool struct due to its complex data structure.
+Listing 19. Excerpt from LeechRouter
+94 mapping(uint16 => Pool) public pools;
+
+Recommendation
+Implement a custom getter function to return the Pool.strategies array if
+external access to this data is required.
+=========================================================================================
+W4: Unnecessary token swaps in withdrawal process
+Impact: Warning Likelihood: N/A
+Target: StrategyVelodromeV2StableF
+arm.sol,
+StrategyVelodromeV3_USDC*.
+sol
+Type: Code quality
+Description
+The Leech protocol performs unnecessary token conversions during the
+withdrawal process. When users request withdrawals in token0 or token1 (the
+tokens used for providing liquidity), the protocol first converts these tokens
+to USDC before converting them back to the requested token. This process
+creates unnecessary swap operations and potential value loss through
+trading fees.
+Listing 20. Excerpt from StrategyVelodromeV2StableFarm
+314 if (address(token0) != address(USDC)) {
+315 VELODROME_ROUTER.swapExactTokensForTokens(
+316 token0.balanceOf(address(this)),
+317 0,
+318 routes[token0][USDC],
+319 address(this),
+320 block.timestamp
+321 );
+322 }
+323 // Swap token1 to USDC
+324 if (address(token1) != address(USDC)) {
+325 VELODROME_ROUTER.swapExactTokensForTokens(
+326 token1.balanceOf(address(this)),
+327 0,
+328 routes[token1][USDC],
+329 address(this),
+330 block.timestamp
+331 );
+332 }
+333 // Swap USDC to withdraw token if needed
+334 if (address(USDC) != address(withdrawToken)) {
+335 VELODROME_ROUTER.swapExactTokensForTokens(
+336 USDC.balanceOf(address(this)),
+337 0,
+338 routes[USDC][withdrawToken],
+339 address(this),
+340 block.timestamp
+341 );
+342 }
+
+Recommendation
+Implement direct token withdrawals when users request token0 or token1.
+Skip the intermediate USDC conversion step when the requested withdrawal
+token matches one of the liquidity pair tokens.
+=========================================================================================
+W5: Epoch Time Range Overlap in Reward
+Distribution
+Impact: Warning Likelihood: N/A
+Target: Rewarder.sol Type: Logic error
+Description
+The Leech protocol implements an epoch-based reward distribution
+mechanism. The current implementation allows epochs to overlap in their time
+ranges, potentially resulting in excessive reward distributions to users.
+Listing 21. Excerpt from Rewarder
+111 function setEpoch(
+112 uint16 poolId,
+113 uint256 start,
+114 uint256 duration,
+115 uint256 rewardPerShare,
+116 uint8 decimals
+117 ) external onlyOwner {
+118 // The start cannot be in the past and not too far in the future
+119 if (start < block.timestamp || start > block.timestamp + 365 days)
+120 revert WrongTime();
+121 poolEpochs[poolId].push(
+122 Epoch(poolId, poolEpochs[poolId].length, start, duration,
+  rewardPerShare, decimals)
+123 );
+124 emit EpochSet(poolId);
+
+Recommendation
+Implement validation logic to ensure that new epochs do not overlap with
+existing epochs: - verify that the new epoch’s start time is greater than or
+equal to the previous epoch’s end time; and - add a require statement to
+enforce this constraint in the epoch creation function.
+=======================================================================================
+W6: Account abstraction users cannot receive unused funds back
+Impact: Warning Likelihood: N/A
+Target: LeechRouter.sol Type: Standards
+violation
+Description
+The Leech protocol utilizes the tx.origin variable in two functions:
+• refunding unused funds to users: .Excerpt from
+StrategyVelodromeV2StableFarm
+if (token0.balanceOf(address(this)) != 0)
+  token0.safeTransfer(tx.origin, token0.balanceOf(address(this)));
+if (token1.balanceOf(address(this)) != 0)
+  token1.safeTransfer(tx.origin, token1.balanceOf(address(this)));
+• bridging user funds to the target chain: .Excerpt from
+BaseLeechTransporter
+stargate.swap{value: msg.value}(
+  getStargateChainId[_destinationChainId],
+  _srcPoolId,
+  _dstPoolId,
+  tx.origin,
+  _bridgedAmount,
+  0,
+  _lzTxParams,
+  abi.encodePacked(_destAddress),
+  ""
+);
+When transactions are initiated through smart contract wallets (account
+abstraction), the tx.origin address does not correspond to the user’s smart contract wallet address. This prevents smart contract wallet users from
+receiving their funds.
+
+Recommendation
+Remove all tx.origin usage to ensure compatibility with smart contract
+wallets (account abstraction). Use msg.sender or implement a parameter for
+the receiving address.
+=========================================================================================
+W7: Missing Storage Gaps
+Impact: Warning Likelihood: N/A
+Target: BaseStrategy.sol Type: Storage clashes
+Description
+The parent contracts BaseStrategy, which is inherited by all strategies, are
+missing storage gaps. This makes the codebase harder to upgrade and
+maintain in the future when storage layout is changed in the inheritance
+chain.
+
+Recommendation
+Add storage gaps to the BaseStrategy contract. For more information, see
+OpenZeppelin Storage Gaps.
+========================================================================================
+I1: console.log Statements Present in Production
+Code
+Impact: Info Likelihood: N/A
+Target: LeechRouter.sol Type: Code quality
+Description
+The codebase contains multiple console.log statements that are typically
+used during development. These debugging statements should not be
+present in production code.
+Listing 22. Excerpt from LeechRouter
+862 console.log(amount);
+Listing 23. Excerpt from LeechSwapper
+34 console.log(router);
+35 IERC20(tokenIn).approveAll(router);
+36 console.log(tokenIn);
+37 console.log(tokenOut);
+
+Recommendation
+Remove all console.log statements from the production codebase.
+=========================================================================================
+I2: Unused Custom Error Declarations
+Impact: Info Likelihood: N/A
+Target: IVelodromePair.sol,
+IRouterVelodrome.sol,
+IGauge.sol, IBaseStrategy.sol,
+IRewarder.sol,
+LeechSwapper.sol,
+ILeechRouter.sol
+Type: Code quality
+Description
+The following custom error declarations are not referenced in any revert
+statements throughout the codebase:
+Listing 24. Excerpt from IVelodromePair
+11 error BelowMinimumK();
+12 error DepositsNotEqual();
+13 error FactoryAlreadySet();
+14 error InsufficientInputAmount();
+15 error InsufficientLiquidity();
+16 error InsufficientLiquidityBurned();
+17 error InsufficientLiquidityMinted();
+18 error InsufficientOutputAmount();
+19 error InvalidTo();
+20 error IsPaused();
+21 error K();
+22 error NotEmergencyCouncil();
+23 error StringTooLong(string str);
+Listing 25. Excerpt from IRouterVelodrome
+23 error ConversionFromV2ToV1VeloProhibited();
+24 error ETHTransferFailed();
+25 error Expired();
+26 error InsufficientAmount();
+27 error InsufficientAmountA();
+28 error InsufficientAmountADesired()
+29 error InsufficientAmountAOptimal();
+30 error InsufficientAmountB();
+31 error InsufficientAmountBDesired();
+32 error InsufficientLiquidity();
+33 error InsufficientOutputAmount();
+34 error InvalidAmountInForETHDeposit();
+35 error InvalidPath();
+36 error InvalidRouteA();
+37 error InvalidRouteB();
+38 error InvalidTokenInForETHDeposit();
+39 error OnlyWETH();
+40 error PoolDoesNotExist();
+41 error PoolFactoryDoesNotExist();
+42 error SameAddresses();
+43 error ZeroAddress();
+Listing 26. Excerpt from IGauge
+5 error NotAlive();
+6 error NotAuthorized();
+7 error NotVoter();
+8 error RewardRateTooHigh();
+9 error ZeroAmount();
+10 error ZeroRewardRate();
+Listing 27. Excerpt from IBaseStrategy
+55 error StrategyDisabled();
+Listing 28. Excerpt from IBaseStrategy
+64 error Reentrancy();
+Listing 29. Excerpt from IRewarder
+47 error BadAmount();
+Listing 30. Excerpt from LeechSwapper
+15 error TransferFailed();
+16 error ApprovalFailed();
+17 error KyberSwapCallFailed();
+Listing 31. Excerpt from ILeechRouter
+155 error Banned();
+156 error NotBanned();
+157 error StrategyDisabled();
+Listing 32. Excerpt from ILeechRouter
+161 error TransferFailed();
+Listing 33. Excerpt from ILeechRouter
+168 error StoreUndefined();
+Listing 34. Excerpt from ILeechRouter
+170 error WrongBlockchain();
+171 error WrongBridgeFees();
+Listing 35. Excerpt from ILeechRouter
+173 error StoreAlreadyInitialized();
+Listing 36. Excerpt from ILeechRouter
+179 error NotSinglePool();
+
+Recommendation
+Remove all unused custom error declarations to:
+• reduce contract bytecode size;
+• improve code maintainability;
+• prevent confusion during future development
+=======================================================================================
+I3: Unused Event Declarations
+Impact: Info Likelihood: N/A
+Target: ICLGauge.sol,
+IVelodromePair.sol, IGauge.sol,
+ILeechTransporter.sol,
+IRewarder.sol
+Type: Code quality
+Description
+The following event declarations are not emitted anywhere in the codebase:
+Listing 37. Excerpt from ICLGauge
+5 event ClaimFees(address indexed from, uint256 claimed0, uint256 claimed1);
+6 event ClaimRewards(address indexed from, uint256 amount);
+7 event Deposit(
+8 address indexed user,
+9 uint256 indexed tokenId,
+10 uint128 indexed liquidityToStake
+11 );
+12 event NotifyReward(address indexed from, uint256 amount);
+13 event Withdraw(
+Listing 38. Excerpt from IVelodromePair
+11 error BelowMinimumK();
+12 error DepositsNotEqual();
+13 error FactoryAlreadySet();
+14 error InsufficientInputAmount();
+15 error InsufficientLiquidity();
+16 error InsufficientLiquidityBurned();
+17 error InsufficientLiquidityMinted();
+18 error InsufficientOutputAmount();
+19 error InvalidTo();
+20 error IsPaused();
+21 error K();
+22 error NotEmergencyCouncil();
+23 error StringTooLong(string str);
+24 event Approval(
+25 address indexed owner,
+26 address indexed spender,
+27 uint256 value
+28 );
+29 event Burn(
+30 address indexed sender,
+31 address indexed to,
+32 uint256 amount0,
+33 uint256 amount1
+34 );
+35 event Claim(
+36 address indexed sender,
+37 address indexed recipient,
+38 uint256 amount0,
+39 uint256 amount1
+40 );
+41 event EIP712DomainChanged();
+42 event Fees(address indexed sender, uint256 amount0, uint256 amount1);
+43 event Mint(address indexed sender, uint256 amount0, uint256 amount1);
+44 event Swap(
+45 address indexed sender,
+46 address indexed to,
+47 uint256 amount0In,
+48 uint256 amount1In,
+49 uint256 amount0Out,
+50 uint256 amount1Out
+51 );
+52 event Sync(uint256 reserve0, uint256 reserve1);
+53 event Transfer(address indexed from, address indexed to, uint256 value);
+Listing 39. Excerpt from IGauge
+ 5 error NotAlive();
+ 6 error NotAuthorized();
+ 7 error NotVoter();
+ 8 error RewardRateTooHigh();
+ 9 error ZeroAmount();
+10 error ZeroRewardRate();
+11 
+12 event ClaimFees(address indexed from, uint256 claimed0, uint256 claimed1);
+13 event ClaimRewards(address indexed from, uint256 amount);
+14 event Deposit(address indexed from, address indexed to, uint256 amount);
+15 event NotifyReward(address indexed from, uint256 amount);
+16 event Withdraw(address indexed from, uint256 amount);
+Listing 40. Excerpt from ILeechTransporter
+25 event AssetBridged(uint256 chainId, address routerAddress, uint256 amount);
+Listing 41. Excerpt from IRewarder
+65 event OracleSet(address oracle);
+
+Recommendation
+Remove all unused event declarations from the interfaces to improve code
+clarity and reduce gas costs during deployment.
+========================================================================================
+I4: Autocompound function lacks access control
+Impact: Info Likelihood: N/A
+Target: StrategyVelodromeV2StableC
+HIDAIFarm.sol
+Type: Access control
+Description
+The autocompound function, which reinvests received rewards, lacks access
+control modifiers. Any external owned account (EOA) can call this function.
+While this does not present an immediate risk since the function only sends
+funds to a hardcoded pool, future modifications that add parameters such as
+pool address could introduce security vulnerabilities.
+Listing 42. Excerpt from StrategyVelodromeV2StableCHIDAIFarm
+132 function autocompound(
+133 uint256 minAmount,
+134 bytes memory data
+135 ) public override {
+136 // Execute parent code first (pause check)
+137 super.autocompound(minAmount, data);
+138 // Do we have something to claim?
+139 (, uint256[] memory _claimable) = claimable();
+140 if (_claimable[0] == 0) revert ZeroAmount();
+141 // Mint rewards in VELOv2 tokens
+142 GAUGE.getReward(address(this));
+143 // Get reward amount
+144 uint256 reward = VELO.balanceOf(address(this));
+145 // Send fee to the treasure
+146 VELO.safeTransfer(treasury, reward.calcFee(protocolFee));
+147 // Re-invest reward
+148 _deposit(VELO, minAmount, data);
+149 // Notify services
+150 emit Compounded(reward, reward.calcFee(protocolFee));
+151 }
+
+Recommendation
+Implement appropriate access control modifiers for the autocompound
+function.
+=========================================================================================
+I5: Unused Contract Functions
+Impact: Info Likelihood: N/A
+Target: BaseLeechTransporter.sol,
+BytesLib.sol, FullMath.sol,
+LiquidityAmounts.sol, Path.sol
+Type: Code quality
+Description
+The following functions are declared but not utilized within the codebase:
+Listing 43. Excerpt from BaseLeechTransporter
+422 function _withSlippage(
+Listing 44. Excerpt from BytesLib
+13 function concat(
+Listing 45. Excerpt from BytesLib
+91 function concatStorage(bytes storage _preBytes, bytes memory _postBytes)
+  internal {
+Listing 46. Excerpt from BytesLib
+308 function toUint8(bytes memory _bytes, uint256 _start) internal pure returns
+  (uint8) {
+Listing 47. Excerpt from BytesLib
+319 function toUint16(bytes memory _bytes, uint256 _start) internal pure returns
+  (uint16) {
+Listing 48. Excerpt from BytesLib
+342 function toUint32(bytes memory _bytes, uint256 _start) internal pure returns
+  (uint32) {
+Listing 49. Excerpt from BytesLib
+353 function toUint64(bytes memory _bytes, uint256 _start) internal pure returns
+  (uint64) {
+Listing 50. Excerpt from BytesLib
+364 function toUint96(bytes memory _bytes, uint256 _start) internal pure returns
+  (uint96) {
+Listing 51. Excerpt from BytesLib
+375 function toUint128(bytes memory _bytes, uint256 _start) internal pure
+  returns (uint128) {
+Listing 52. Excerpt from BytesLib
+386 function toUint256(bytes memory _bytes, uint256 _start) internal pure
+  returns (uint256) {
+Listing 53. Excerpt from BytesLib
+397 function toBytes32(bytes memory _bytes, uint256 _start) internal pure
+  returns (bytes32) {
+Listing 54. Excerpt from BytesLib
+408 function equal(bytes memory _preBytes, bytes memory _postBytes) internal
+  pure returns (bool) {
+Listing 55. Excerpt from BytesLib
+451 function equalStorage(
+Listing 56. Excerpt from FullMath
+118 function mulDivRoundingUp(
+Listing 57. Excerpt from LiquidityAmounts
+70 function getLiquidityForAmounts(
+Listing 58. Excerpt from Path
+25 function hasMultiplePools(bytes memory path) internal pure returns (bool) {
+Listing 59. Excerpt from Path
+59 function getFirstPool(bytes memory path) internal pure returns (bytes memory)
+  {
+Recommendation
+Remove these functions Remove these unused functions from the codebase
+to:
+• reduce contract deployment costs;
+• improve code maintainability;
+• eliminate potential security risks from dormant code.
+========================================================================================
+I6: Unused imports
+Impact: Info Likelihood: N/A
+Target: IRewarder.sol,
+ILeechRouter.sol
+Type: Code quality
+Description
+The following import statements are not utilized in their respective files:
+Listing 62. Excerpt from IRewarder
+4 import "@openzeppelin/contracts-
+  upgradeable/token/ERC20/IERC20Upgradeable.sol";
+Listing 63. Excerpt from ILeechRouter
+4 import "@openzeppelin/contracts-
+  upgradeable/token/ERC20/IERC20Upgradeable.sol";
+Listing 64. Excerpt from IRewarder
+4 import "@openzeppelin/contracts-
+  upgradeable/token/ERC20/IERC20Upgradeable.sol";
+Listing 65. Excerpt from ILeechRouter
+4 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+Listing 66. Excerpt from StrategyVelodromeV2StableCHIDAIFarm
+7 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+8 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+9 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+Listing 67. Excerpt from StrategyVelodromeV2StableCHIDAIFarm
+12 import "../../../libraries/Babylonian.sol";
+Listing 68. Excerpt from StrategyVelodromeV2StableFarm
+7 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+8 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+9 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+Listing 69. Excerpt from StrategyVelodromeV2StableFarm
+12 import "../../../libraries/Babylonian.sol";
+Listing 70. Excerpt from StrategyVelodromeV3StableFarm
+8 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+9 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+10 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+Listing 71. Excerpt from StrategyVelodromeV3StableFarm
+13 import "../../../libraries/Babylonian.sol";
+Listing 72. Excerpt from StrategyVelodromeV3StableFarm
+15 import "./Utils/Path.sol";
+Listing 73. Excerpt from StrategyVelodromeV3StableFarm
+18 import "./Utils/UniV3Utils.sol";
+Listing 74. Excerpt from StrategyVelodromeV3_USDC_LUSD
+8 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+9 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+10 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+Listing 75. Excerpt from StrategyVelodromeV3_USDC_LUSD
+13 import "../../../libraries/Babylonian.sol";
+Listing 76. Excerpt from StrategyVelodromeV3_USDC_LUSD
+15 import "./Utils/Path.sol";
+Listing 77. Excerpt from StrategyVelodromeV3_USDC_LUSD
+18 import "./Utils/UniV3Utils.sol";
+Listing 78. Excerpt from StrategyVelodromeV3_USDC_SDAI
+8 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+9 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+10 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+Listing 79. Excerpt from StrategyVelodromeV3_USDC_SDAI
+13 import "../../../libraries/Babylonian.sol";
+Listing 80. Excerpt from StrategyVelodromeV3_USDC_SDAI
+15 import "./Utils/Path.sol";
+Listing 81. Excerpt from StrategyVelodromeV3_USDC_SDAI
+18 import "./Utils/UniV3Utils.sol";
+Listing 82. Excerpt from StrategyVelodromeV3_USDC_SUSD
+8 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+9 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+10 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+Listing 83. Excerpt from StrategyVelodromeV3_USDC_SUSD
+13 import "../../../libraries/Babylonian.sol";
+Listing 84. Excerpt from StrategyVelodromeV3_USDC_SUSD
+15 import "./Utils/Path.sol";
+Listing 85. Excerpt from StrategyVelodromeV3_USDC_SUSD
+18 import "./Utils/UniV3Utils.sol";
+The presence of unused imports increases code complexity and may lead to
+confusion during maintenance.
+
+Recommendation
+Remove the identified unused import statements to:
+• improve code readability;
+• reduce compilation overhead;
+• prevent potential naming conflicts; and
+• enhance code maintainability
+========================================================================================
+I7: Unused modifiers
+Impact: Info Likelihood: N/A
+Target: BaseStrategy.sol Type: Code quality
+Description
+The following modifiers in the BaseStrategy contract are not utilized in the
+codebase:
+Listing 86. Excerpt from BaseStrategy
+73 modifier onlyController() {
+74 if (msg.sender != router) revert Unauthorized();
+75 _;
+76 }
+Listing 87. Excerpt from BaseStrategy
+85 modifier notZeroAddress(address addressToCheck) {
+86 if (addressToCheck == address(0)) revert ZeroAddress();
+87 _;
+88 }
+
+Recommendation
+Remove the unused modifiers from the BaseStrategy contract to improve
+code maintainability and reduce deployment costs.
+=========================================================================================
+I8: Unused using for
+Impact: Info Likelihood: N/A
+Target: BaseStrategy.sol Type: Code quality
+Description
+The following using-for directives are not utilized in the codebase:
+Listing 91. Excerpt from BaseStrategy
+36 using SafeERC20Upgradeable for IERC20Upgradeable;
+Listing 92. Excerpt from StrategyVelodromeV2StableCHIDAIFarm
+42 using HelpersUpgradeable for bytes;
+Listing 93. Excerpt from StrategyVelodromeV2StableFarm
+39 using HelpersUpgradeable for bytes;
+Listing 94. Excerpt from StrategyVelodromeV3StableFarm
+46 /// @dev A library used to calculate slippage.
+Listing 95. Excerpt from StrategyVelodromeV3StableFarm
+54 /// @notice The struct to store our tick positioning.
+Listing 96. Excerpt from StrategyVelodromeV3_USDC_LUSD
+46 using HelpersUpgradeable for bytes;
+Listing 97. Excerpt from StrategyVelodromeV3_USDC_LUSD
+54 using TickMath for int24;
+Listing 98. Excerpt from StrategyVelodromeV3_USDC_SDAI
+45 using HelpersUpgradeable for bytes;
+Listing 99. Excerpt from StrategyVelodromeV3_USDC_SDAI
+53 using TickMath for int24;
+Listing 100. Excerpt from StrategyVelodromeV3_USDC_SUSD
+45 using HelpersUpgradeable for bytes;
+Listing 101. Excerpt from StrategyVelodromeV3_USDC_SUSD
+53 using TickMath for int24;
+
+Recommendation
+Remove all unused using-for directives from the contracts to: - improve code
+clarity; and - reduce gas costs during deployment.
+=======================================================================================
+I9: Inconsistent msg.sender Role Validation in pause Functions
+Impact: Info Likelihood: N/A
+Target: LeechRouter.sol Type: Code quality
+Description
+The LeechRouter.sol contract implements two pause-related functions with
+inconsistent approaches to validating the msg.sender role:
+Listing 102. Excerpt from LeechRouter
+484 function pause() external {
+485 if (
+486 !hasRole(ADMIN_ROLE, _msgSender()) &&
+487 !hasRole(PAUSER_ROLE, _msgSender())
+488 ) revert Unauthorized();
+489 _pause();
+490 }
+Listing 103. Excerpt from LeechRouter
+498 function setCrosschainPaused(
+499 bool isCrosschainPaused
+500 ) external onlyRole(ADMIN_ROLE) {
+501 crosschainPaused = isCrosschainPaused;
+502 emit CrosschainStatusChanged(isCrosschainPaused);
+503 }
+
+Recommendation
+Standardize the role validation approach across both functions to enhance
+code consistency and maintainability. Consider using the
+onlyRole(PAUSE_ROLE) modifier pattern consistently
+=========================================================================================
+I10: The initializePosition function in Velodrome V3 strategies should be external
+Impact: Info Likelihood: N/A
+Target: StrategyVelodromeV3*.sol Type: Code quality
+Description
+The initializePosition function in all Velodrome V3 strategies is declared as
+public but is never called internally by the protocol. This violates the principle
+of least privilege.
+Example of code in StrategyVelodromeV3StableFarm.sol:
+Listing 104. Excerpt from StrategyVelodromeV3StableFarm
+195 uint256 amount0,
+196 uint256 amount1
+197 ) public returns (uint256) {
+198 require(msg.sender == owner() || msg.sender == controller, "Not auth");
+Recommendation
+Change the visibility modifier of the initializePosition function from public
+to external in all Velodrome V3 strategy contracts to follow best practices for
+function visibility
+========================================================================================
+I11: Unused Function Parameters
+Impact: Info Likelihood: N/A
+Target: StrategyVelodromeV2*.sol Type: Code quality
+Description
+The following function parameters in the StrategyVelodromeV2StableFarm and
+StrategyVelodromeV2StableCHIDAIFarm contracts are not utilized in the
+implementation:
+Listing 105. Excerpt from StrategyVelodromeV2StableFarm
+216 function _deposit(
+217 IERC20Upgradeable depositToken,
+218 uint256 minAmount,
+219 bytes memory
+220 ) internal override returns (uint256 shares) {
+Listing 106. Excerpt from StrategyVelodromeV2StableCHIDAIFarm
+209 function _deposit(
+210 IERC20Upgradeable depositToken,
+211 uint256 minAmount,
+212 bytes memory
+213 ) internal override returns (uint256 shares) {
+
+Recommendation
+Remove the unused parameters from these functions to improve code
+readability and reduce gas costs
+========================================================================================
+I12: Inconsistent parameter naming in setRoutes
+functions across Velodrome strategies
+Impact: Info Likelihood: N/A
+Target: StrategyVelodromeV3StableF
+arm.sol,
+StrategyVelodromeV2StableF
+arm.sol
+Type: Code quality
+Description
+The setRoutes functions in StrategyVelodromeV3StableFarm.sol and
+StrategyVelodromeV2StableFarm.sol implement identical logic but use
+inconsistent parameter naming conventions.
+Listing 107. Excerpt from StrategyVelodromeV3StableFarm
+158 IERC20Upgradeable tokenIn,
+159 IERC20Upgradeable tokenOut,
+160 bytes calldata path
+161 ) external onlyOwner {
+162 routes[tokenIn][tokenOut] = path;
+Listing 108. Excerpt from StrategyVelodromeV2StableFarm
+112 function setRoutes(
+113 IERC20Upgradeable tokenFrom,
+114 IERC20Upgradeable tokenTo,
+115 IRouterVelodrome.Route[] memory newPaths
+116 ) external onlyOwner {
+
+Recommendation
+Standardize the parameter naming across both strategy contracts. Consider
+adopting the naming convention from StrategyVelodromeV3StableFarm.sol for
+consistency
+=========================================================================================
+I13: Unused Multichain Integration Code Present
+in Codebase
+Impact: Info Likelihood: N/A
+Target: BaseLeechTransporter.sol Type: Code quality
+Description
+The Leech protocol contains remnants of a deprecated Multichain
+integration. The integration code remains in the codebase despite no longer
+being utilized.
+Listing 109. Excerpt from BaseLeechTransporter
+283 function _bridgeOutMultichain(
+
+Recommendation
+Remove all Multichain integration code from the codebase to improve code
+maintainability and reduce potential confusion
+=========================================================================================
+I14: Unused Interface and Library
+Impact: Info Likelihood: N/A
+Target: IRewarder.sol, UniV3Utils.sol Type: Code quality
+Description
+The codebase contains unused code components:
+• the 'IRewarder' interface is not implemented by any contract; and
+• the 'UniV3Utils' library has no function calls throughout the codebase.
+
+Recommendation
+Implement the 'IRewarder' interface in the 'Rewarder' contract if required.
+Remove the 'UniV3Utils' library if it serves no purpose in the codebase
+========================================================================================
+I15: Incorrect Event Name in NatSpec
+Documentation
+Impact: Info Likelihood: N/A
+Target: LeechRouter.sol Type: Code quality
+Description
+The NatSpec documentation in the LeechRouter.sol contract contains an
+incorrect event name reference.
+Listing 110. Excerpt from LeechRouter
+358 * @notice Called by finalizer service after WithdrawalRequested event was
+  caught and validated.
+The event name 'WithdrawalRequested' is incorrectly documented. The
+correct event name is 'WithdrawRequest'.
+
+Recommendation
+Update the NatSpec documentation to reference the correct event name
+'WithdrawRequest'.
+=========================================================================================

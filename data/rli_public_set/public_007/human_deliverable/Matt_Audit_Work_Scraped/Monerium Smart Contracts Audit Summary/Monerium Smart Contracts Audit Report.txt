@@ -1,0 +1,591 @@
+Repository URL: https://github.com/monerium/smart-contracts/
+commit: 34c846c
+========================================================================
+Findings Summary:
+==================
+M1: Access control architecture
+Medium severity issue
+Impact: High Likelihood: Low
+Target: SystemRole.sol Type: Access control
+Description
+The SystemRole base contract lacks the protection of functions. Despite the
+presence of an onlyOwner modifier inherited from the Ownable contract, crucial
+functions for role management are not adequately safeguarded by it.
+Although child contracts may override these functions with the modifier, the
+dependency on manual overriding leaves room for human error.
+Example of virtual function in SystemRole.sol:
+function addAdminAccount(address account) public virtual {
+  grantRole(ADMIN_ROLE, account);
+  emit AdminAccountAdded(account);
+}
+Example of overriding function in StandardController.sol:
+function addAdminAccount(address account) public override onlyOwner {
+  super.addAdminAccount(account);
+}
+Vulnerability scenarios
+The developer removes the overridden function from the derived contract
+because it looks like it only calls the super function.
+Or the developer creates a new contract, which inherits from the SystemRole
+and forgets to override critical functions with onlyOwner modifier. Then
+anyone would be able to add admin account for example.
+Recommendation
+The onlyOwner modifier should be added to functions in the SystemRole base
+contract. Namely, this applies to the following functions: addSystemAccount,
+removeSystemAccount, addAdminAccount, removeAdminAccount and
+setMaxMintAllowance. For the setMintAllowance the onlyAdminAccounts modifier
+is used in the StandardController.
+Solution (Revision 1.1)
+Fixed, "All modifiers have been relocated to where the original function is
+declared, in SystemRole."
+===========================================================================
+M2: Renounce ownership
+Medium severity issue
+Impact: High Likelihood: Low
+Target: Ownable.sol Type: Access control
+Description
+The Ownable base contract contains the renounceOwnership function, which
+could have severe consequences for the protocol, meaning that nobody
+would be able to call functions protected by the onlyOwner modifier anymore.
+function renounceOwnership() public onlyOwner {
+  emit OwnershipRenounced(owner);
+  owner = address(0);
+}
+Vulnerability scenario
+The owner (multiple malicious multi-sig owners) accidentally or intentionally
+calls renounceOwnership e.g. on TokenFrontend and loses the ability to
+setController.
+Recommendation
+Remove the renounceOwnership function to disable this unwanted feature.
+Solution (Revision 1.1)
+Fixed, "The required function has been successfully incorporated."
+===========================================================================
+M3: Weak ownership
+Medium severity issue
+Impact: High Likelihood: Low
+Target: Ownable inherited Type: Access control
+Description
+The protocol strongly relies on the owner in terms of setting critical
+parameters like roles, validators, balances or allowances. But according to
+Monerium’s statement, the owner account uses Safe multi-sig wallet with a
+threshold scheme of only 2/6.
+Vulnerability scenarios
+• Two owners, with malicious intent, may conspire and act against the
+protocol’s interests.
+• Private keys of two owners are compromised and an unauthorized party
+damages the protocol.
+Recommendation
+The current multi-sig scheme of 2/6 does not provide adequate security. To
+address this vulnerability, we recommend to increase the threshold to at
+least 3/6. This will ensure that no two owners can conspire or in the event of
+their private keys being compromised, the protocol remains secure.
+Perform frequent audits of the owner keys and periodically change them to
+reduce the risks of keys getting compromised.
+Solution (Revision 1.1)
+Fixed, Monerium agreed to increase the multi-sig scheme to 3/6.
+===========================================================================
+M4: Unchecked return values
+Medium severity issue
+Impact: High Likelihood: Low
+Target: PolygonPosTokenFrontend.sol
+, SmartTokenLib.sol
+Type: Data validation
+Description
+Return values of mint and burn functions are not checked. Even though these
+functions return only true in current implementations, it remains a best
+practice to validate the return values to avoid future human errors.
+PolygonPosTokenFrontend.sol
+this.mintTo(user, amount);
+controller.burnFrom(msg.sender, amount);
+SmartTokenLib.sol
+token.burn(from, amount);
+token.mint(to, amount);
+Vulnerability scenario
+The developer changes the implementation of a function to return false
+under certain conditions. Transaction proceeds and the event is emitted,
+even when the function execution was not successful.
+e.g. in PolygonPosTokenFrontend.sol:
+function withdraw(uint256 amount) external override {
+  controller.burnFrom(msg.sender, amount);
+  emit Transfer(msg.sender, address(0x0), amount);
+}
+Recommendation
+Implement return values checks to make the system more rigid and human
+error-proof.
+require(controller.burnFrom(msg.sender, amount), "burnFrom failed");
+Solution (Revision 1.1)
+Partially Fixed, "The SmartTokenLib now evaluates the return value for
+potential future utilization. It should be noted that
+PolygonPosTokenFrontend.sol has not undergone any modifications."
+===========================================================================
+M5: Missing decimals validation
+Medium severity issue
+Impact: High Likelihood: Low
+Target: TokenStorageLib.sol Type: Data validation
+Description
+The TokenStorage struct holds balances, totalSupply and allowed values, but
+does not determine decimals of these values. Decimals are hardcoded to 18 in
+the controller but lack any validation.
+struct TokenStorage {
+  mapping(address => uint) balances;
+  mapping(address => mapping(address => uint)) allowed;
+  uint totalSupply;
+}
+Vulnerability scenario
+A controller with different decimals is deployed with the attached
+TokenStorage struct nominated in 18 decimals. Due to missing validations, the
+transaction does not revert and lets the controller with e.g. 4 decimals
+operate on the storage nominated in 18 decimals.
+Recommendation
+Move the decimals specification to the TokenStorage struct to reduce the risk
+of decimal mismatch.
+struct TokenStorage {
+  mapping(address => uint256) balances;
+  mapping(address => mapping(address => uint)) allowed;
+  uint256 totalSupply;
+  uint8 decimals;
+}
+If it’s needed to keep the decimals in the controller, then introduce validation
+checks during the deployment of the controller to verify the compatibility of
+decimal values between the controller and the TokenStorage.
+Solution (Revision 1.1)
+Fixed, "The decimals value has been relocated from the controller to the
+TokenStorage."
+Solution (Revision 1.2)
+Acknowledged. The client reverted the fix from revision 1.1 and decided not to
+deploy the fix on the mainnet due to the low likelihood and risks of migration
+process of TokenStorage.
+===========================================================================
+L1: Missing validations
+Low severity issue
+Impact: Low Likelihood: Low
+Target: PolygonPosTokenFrontend.sol
+, TokenFrontend.sol
+Type: Data validation
+Description
+The constructor of PolygonPosTokenFrontend lacks essential validations for
+zero-address and zero-length.
+constructor(
+  string memory name_,
+  string memory symbol_,
+  bytes3 ticker_,
+  address childChainManager_
+  ) TokenFrontend(name_, symbol_, ticker_) {
+  _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+  _setupRole(DEPOSITOR_ROLE, childChainManager_);
+  }
+Vulnerability scenario
+The empty parameter is passed during the deployment, the contract
+becomes unusable and it would require re-deployment.
+Recommendation
+Add zero-address check for childChainManager_ in the PolygonPosTokenFrontend
+constructor, and zero-length validation for name_ and symbol_ in the
+TokenFrontend constructor.
+Solution (Revision 1.1)
+Acknowledged, "In the event that a redeployment of our frontend contracts
+is required, we have plans in place to enhance their design, making them more
+flexible and upgradeable. Therefore, this issue has been acknowledged but
+not immediately addressed."
+===========================================================================
+W1: Impossible to remove bridgeFrontend
+Impact: Warning Likelihood: N/A
+Target: StandardController.sol Type: Access control
+Description
+There is no way to remove bridge frontend addresses from the
+bridgeFrontends mapping in StandardController.
+Vulnerability scenario
+One of the bridgeFrontends becomes malicious and misuses onlyFrontend
+functions.
+Recommendation
+Implement the function removeBridgeFrontend to have more control over
+bridgeFrontends collection.
+function removeBridgeFrontend(address frontend_) public onlyOwner {
+  bridgeFrontends[frontend_] = false;
+  emit BridgeFrontendRemove(frontend_);
+}
+Solution (Revision 1.1)
+Fixed, The required function and corresponding event have been successfully
+added.
+===========================================================================
+W2: Unprotected functions
+Impact: Warning Likelihood: N/A
+Target: BlacklistValidator.sol Type: Access control
+Description
+The BlacklistValidator contract inherits from SystemRole contract and does
+not override functions setMaxMintAllowance and setMintAllowance with
+onlyOwner modifier. Therefore anyone can call setMaxMintAllowance and
+setMintAllowance. However, these state variables aren’t used in the
+BlacklistValidator and rather point to bad inheritance architecture.
+Recommendation
+Refactor the BlacklistValidator inheritance to remove unused/unnecessary
+state variables and functions from it.
+Solution (Revision 1.1)
+Fixed, "The allowance functions have been moved from SystemRole to
+MintableController, resulting in the BlacklistValidator no longer possessing
+any unprotected inherited functions."
+===========================================================================
+W3: Missing events
+Impact: Warning Likelihood: N/A
+Target: Claimable.sol, SystemRole.sol,
+ClaimableSystemRole.sol
+Type: Best practices
+Description
+The function transferOwnership in Claimable and ClaimableSystemRole
+contracts changes the contract state (pendingOwner) but does not emit the
+event. Also, the function setMaxMintAllowance in the SystemRole lacks event
+emit.
+function transferOwnership(address newOwner) public virtual override
+onlyOwner {
+  pendingOwner = newOwner;
+}
+Recommendation
+Emit the event in transferOwnership function. It’s generally good practice to
+emit events after every contract state change.
+function transferOwnership(address newOwner) public virtual override
+onlyOwner {
+  pendingOwner = newOwner;
+  emit PendingOwner(pendingOwner);
+}
+Solution (Revision 1.1)
+Fixed, "The necessary events have been successfully incorporated."
+===========================================================================
+W4: Duplicated event
+Impact: Warning Likelihood: N/A
+Target: TokenFrontend.sol Type: Events
+Description
+The TokenFrontend contract contains a duplicated event emit in the
+transferAndCall function.
+emit Transfer(msg.sender, to, amount);
+emit Transfer(msg.sender, to, amount, data);
+Recommendation
+Remove the first emit and use only the second one, which contains the same
+parameters.
+Solution (Revision 1.1)
+Invalidated, "The presence of this duplication is to ensure compliance with
+both ERC667 and ERC20 standards."
+===========================================================================
+W5: Testing contracts
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Best practices
+Description
+The project’s structure currently mixes testing contracts with production
+contracts within the same directory, which reduces code clarity.
+Recommendation
+Relocate all contracts that are not intended for deployment on the mainnet
+into distinct directories, such as test and mock. This approach will improve
+organization and enhance the readability of the codebase.
+Solution (Revision 1.1)
+Fixed, "Contracts not intended for deployment have been appropriately
+relocated into a separate directory, such as scripts, tests, and so on."
+===========================================================================
+W6: Multiple compiler versions
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Compiler
+Description
+The project uses inconsistent pragma solidity syntax and versions. Mixing
+compiler versions might lead to unpredictability and potential issues during
+the compilation and deployment of contracts.
+pragma solidity ^0.8.0;
+pragma solidity ^0.8.11;
+pragma solidity 0.8.11;
+Recommendation
+Always use the same compiler version for all contracts in the project.
+Solution (Revision 1.1)
+Fixed, "All contracts in the project now utilize the same compiler version. The
+selected version is the most recently deployed one, 0.8.11."
+===========================================================================
+I1: Unused library
+Impact: Info Likelihood: N/A
+Target: Roles.sol Type: Best practices
+Description
+The Roles library is not used in the project.
+Recommendation
+Remove the unused library and keep the codebase clean of any unused code.
+Solution (Revision 1.1)
+Fixed, "The "Roles" library has been successfully eliminated from the project."
+===========================================================================
+I2: Unused variables
+Impact: Info Likelihood: N/A
+Target: StandardController.sol Type: Best practices
+Description
+The StandardController contract contains two unused state variables name
+and symbol. Unused code decreases code readability and it does not look
+professional.
+string public name;
+string public symbol;
+Recommendation
+Remove these unused variables from the StandardController contract, as well
+as any other unused code across the project. This will enhance code
+readability and maintainability.
+Solution (Revision 1.1)
+Fixed, "The unused name and symbol variables have been removed from
+StandardController.sol."
+===========================================================================
+I3: Naming conventions
+Impact: Info Likelihood: N/A
+Target: newControllerAndBridge.sol,
+StandardController.sol
+Type: Best practices
+Description
+This informational issue summarizes naming convention violations.
+The filename of contract NewControllerAndBridgeFrontend starts with the
+lowercase character newControllerAndBridge.sol.
+The function avoidBlackholes in StandardController contarct is internal, but
+does not contain the underscore prefix.
+StandardController contains the following functions with mixed case naming:
+• transfer_withCaller
+• transferFrom_withCaller
+• approve_withCaller
+• transferAndCall_withCaller
+The duplicated name TokenStorage is used for contract and struct.
+Recommendation
+• Use CapitalCamelCase for Solidity filenames.
+• Use camelCase for function names.
+• Use underscore prefix for private/internal functions and variables. This is
+not a strict Solidity language naming convention, but it’s widely adopted
+because it increases code readability.
+41 of 65
+• Use unique naming for TokenStorage contract and struct.
+Solution (Revision 1.1)
+Partially Fixed, "Your proposed naming convention has been adopted.
+However, this issue remains partially resolved as our static frontend
+continues to use our controller’s transfer_withCaller, among others."
+===========================================================================
+I4: Unnecessary SafeMath
+Impact: Info Likelihood: N/A
+Target: BasicToken.sol Type: Best practices
+Description
+The BasicToken contract uses the SafeMath library with Solidity ^0.8.0, which
+already includes implicit overflow/underflow safety.
+Recommendation
+Remove the SafeMath library from the project.
+Solution (Revision 1.1)
+Fixed, "The SafeMath component has been successfully removed from the
+project."
+===========================================================================
+I5: Typos
+Impact: Info Likelihood: N/A
+Target: TokenFrontend.sol Type: Best practices
+Description
+• Documentation of burnFrom in TokenFrontend contract contains typo
+"removfes".
+• setAllowed documentation in TokenStorage contains "Qunatity".
+Recommendation
+Correct typographical errors in the documentation.
+Solution (Revision 1.1)
+Fixed, "All identified typographical errors in the comments have been
+corrected."
+===========================================================================
+I6: Inconsistent uint syntax
+Impact: Info Likelihood: N/A
+Target: **/* Type: Best practices
+Description
+The project uses inconsistent uint syntax. In some contracts, there is uint,
+and in others uint256. Although uint is an alias for uint256, consistent syntax
+improves code quality and readability.
+Recommendation
+Use the preferred uint256 syntax in all places. Explicit declaration of size
+improves the readability of the code.
+Solution (Revision 1.1)
+Fixed, uint has been replaced by uint256 in whole project.
+=========================================================================
+W7: Missing event
+Impact: Warning Likelihood: N/A
+Target: StandardController.sol Type: Events
+Description
+In the function StandardController.permit, there is a state-changing call
+token.approve, but no event is emitted.
+Listing 1. Excerpt from StandardController
+318 }
+319 token.approve(owner, spender, value);
+320 }
+Recommendation
+We recommend emitting events after every state-changing operation in
+contracts.
+Solution (Revision 2.1)
+Acknowledged.
+Emitting an event in the StandardController’s function is
+ineffective; events must originate from TokenFrontend. Due to
+TokenFrontend’s approve function utilising msg.sender, calling it
+directly from the controller within permit is not feasible.
+===========================================================================
+W8: Unchecked return values
+Impact: Warning Likelihood: N/A
+Target: TokenFrontend.sol,
+StandardController.sol
+Type: Data validation
+Description
+The following functions in the TokenFrontend contract emit events even in
+case the controller returns false. The current implementation of functions in
+the controller returns always true. But if one of these functions returns false
+after a future controller upgrade, the emitted events can pass inconsistent
+data to other systems that rely on events from the contract.
+Listing 2. Excerpt from TokenFrontend.transfer
+120 ok = controller.transfer_withCaller(msg.sender, to, amount);
+121 emit Transfer(msg.sender, to, amount);
+Listing 3. Excerpt from TokenFrontend.transferFrom
+136 ok = controller.transferFrom_withCaller(msg.sender, from, to,
+  amount);
+137 emit Transfer(from, to, amount);
+Listing 4. Excerpt from TokenFrontend.approve
+153 ok = controller.approve_withCaller(msg.sender, spender,
+  amount);
+154 emit Approval(msg.sender, spender, amount);
+Listing 5. Excerpt from TokenFrontend.transferAndCall
+169 ok = controller.transferAndCall_withCaller(
+170 msg.sender,
+171 to,
+172 amount,
+173 data
+174 );
+175 emit Transfer(msg.sender, to, amount);
+176 emit Transfer(msg.sender, to, amount, data);
+Listing 6. Excerpt from TokenFrontend.mintTo
+185 ok = controller.mintTo_withCaller(msg.sender, to, amount);
+186 emit Transfer(address(0x0), to, amount);
+Listing 7. Excerpt from TokenFrontend.burnFrom
+222 ok = controller.burnFrom_withCaller(
+223 msg.sender,
+224 from,
+225 amount,
+226 h,
+227 v,
+228 r,
+229 s
+230 );
+231 emit Transfer(from, address(0x0), amount);
+Recommendation
+Check return values and emit events only when the result from the controller
+is true.
+Solution (Revision 2.1)
+Acknowledged.
+Modifying TokenFrontend is not an option, rendering the
+warning unaddressable. However, safety is ensured as this
+controller version uses revert to handle failures. The
+forthcoming upgrade will completely substitute this
+implementation with V2.
+===========================================================================
+W9: Dead code
+Impact: Warning Likelihood: N/A
+Target: MintableController.sol,
+HasNoTokens.sol
+Type: Code quality
+Description
+In the MintableController and HasNoTokens contracts, there is a dead code
+used to silence compiler warnings.
+Listing 8. Excerpt from MintableController
+121 function burnFrom_withCaller(
+122 address caller,
+123 address from,
+124 uint256 amount,
+125 bytes32 h,
+126 uint8 v,
+127 bytes32 r,
+128 bytes32 s
+129 ) public view onlyFrontend returns (bool) {
+130 // Explicitly mark parameters as unused to silence compiler
+  warnings
+131 from;
+132 amount;
+133 h;
+134 v;
+135 r;
+136 s;
+137 require(
+138 caller == address(this),
+139 "only allow this contract to be the caller"
+140 );
+141 return true;
+142 }
+54 of 65
+Listing 9. Excerpt from HasNoTokens
+25 _from;
+26 _value;
+27 _data;
+Recommendation
+Remove function parameter names to silence compiler warnings. Ideally, the
+unused parameters in MintableController.burnFrom_withCaller should be
+removed completely and then also in TokenFrontend.burnFrom function.
+Solution (Revision 2.1)
+Fixed. The HasNoToken contract has been deprecated and removed from the
+codebase. Unused function parameter names in
+MintableController.burnFrom_withCaller and the dead code were removed.
+===========================================================================
+I7: Duplicated hash string
+Impact: Info Likelihood: N/A
+Target: StandardController.sol Type: Code quality
+Description
+In the StandardController contract, there is a following hash string duplicated.
+Also, there is an unused constant PERMIT_TYPEHASH, which contains the same
+string and points to an unfinished refactor.
+Listing 10. Excerpt from StandardController
+41 bytes32 private constant PERMIT_TYPEHASH =
+42 keccak256("Permit(address owner,address spender,uint256
+  value,uint256 nonce,uint256 deadline)");
+Listing 11. Excerpt from StandardController
+269 keccak256("Permit(address owner,address
+  spender,uint256 value,uint256 nonce,uint256 deadline)"),
+Listing 12. Excerpt from StandardController
+302 keccak256("Permit(address owner,address
+  spender,uint256 value,uint256 nonce,uint256 deadline)"),
+Recommendation
+We recommend utilizing PERMIT_TYPEHASH constant and removing the code
+duplications.
+Solution (Revision 2.1)
+Fixed, the PERMIT_TYPEHASH constant is now used instead of duplicated code.
+===========================================================================
+I8: Unused imports
+Impact: Info Likelihood: N/A
+Target: SmartController.sol,
+StandardController.sol
+Type: Code quality
+Description
+SmartController and StandardController contracts contain the following
+unused imports.
+Listing 13. Excerpt from StandardController
+21 import "./IERC20.sol";
+Listing 14. Excerpt from SmartController
+22 import "./ERC20Lib.sol";
+Recommendation
+Remove unused imports from the contracts.
+Solution (Revision 2.1)
+Fixed, the unused imports were removed.
+===========================================================================
+I9: Commented-out code
+Impact: Info Likelihood: N/A
+Target: PolygonPosTokenFrontend.sol Type: Code quality
+Description
+The PolygonPosTokenFrontend contains commented-out code.
+Listing 15. Excerpt from PolygonPosTokenFrontend
+86 // controller.burnFrom(msg.sender, amount);
+87 // emit Transfer(msg.sender, address(0x0), amount);
+Recommendation
+Remove commented-out code.
+Solution (Revision 2.1)
+Fixed, the commented-out code was removed.
+===========================================================================
+I10: Interface organization
+Impact: Info Likelihood: N/A
+Target: MintableController.sol Type: Code quality
+Description
+There is an ITokenFrontend interface placed in the MintableController.sol file.
+Listing 16. Excerpt from MintableController
+23 interface ITokenFrontend {
+Recommendation
+Move the interface to a separate file ITokenFrontend.sol. Also, we recommend
+moving all interfaces to the interfaces package to improve the project
+structure.
+Solution (Revision 2.1)
+Fixed, the interface was moved to a separate file.
+===========================================================================
+I11: Typos
+Impact: Info Likelihood: N/A
+Target: TokenFrontend.sol Type: Code quality
+Description
+Typo "ticket" in the TokenFrontend contract.
+Listing 17. Excerpt from TokenFrontend
+110 "ticker does not match controller ticket"
+Recommendation
+Fix the typo to "ticker".
+Solution (Revision 2.1)
+Acknowledged.
+Cannot modify the TokenFrontend.

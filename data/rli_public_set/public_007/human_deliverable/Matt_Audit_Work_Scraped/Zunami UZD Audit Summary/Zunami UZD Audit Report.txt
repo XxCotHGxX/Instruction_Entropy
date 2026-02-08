@@ -1,0 +1,169 @@
+========================================================================
+Finding #1: Anybody can cause DoS of the protocol if the limits are set  
+Severity : High  
+Description:  
+Improper handling of deposit/withdrawal limits allows any user to trigger a Denial-of-Service by reaching the set limits, effectively preventing others from interacting with the protocol.
+
+Recommendation:  
+Implement logic to handle partial fulfillment or queuing of transactions once limits are reached.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #2: Daily deposit/withdrawal limits can be violated  
+Severity : High  
+Description:  
+The implementation of daily deposit and withdrawal limits is flawed, allowing users to exceed the intended caps.
+
+Recommendation:  
+Fix the accounting logic that tracks and enforces daily limits.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #3: The previewWithdraw function does not include fee calculation  
+Severity : High  
+Description:  
+The `previewWithdraw` function omits fee deductions, potentially misleading users regarding expected returns from withdrawals.
+
+Recommendation:  
+Incorporate fee deductions into the preview logic to provide accurate results.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #4: Fees can be set to 100% anytime  
+Severity : Medium  
+Description:  
+The protocol allows setting fees to 100%, which could be abused to confiscate all user funds.
+
+Recommendation:  
+Enforce upper limits on fee parameters to protect users.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #5: Two-phase transfer of ownership  
+Severity : Medium  
+Description:  
+Ownership transfer is implemented using a two-step process, but it is not enforced or documented adequately.
+
+Recommendation:  
+Ensure clear implementation and documentation of the ownership transfer pattern.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #6: Renounce ownership  
+Severity : Medium  
+Description:  
+The contract includes a `renounceOwnership` function, which could unintentionally leave the protocol without an admin.
+
+Recommendation:  
+Evaluate whether renouncing ownership is ever desirable; restrict or disable the function if not.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #7: Support for the meta-transactions  
+Severity : Warning  
+Description:  
+Meta-transaction support is mentioned but not fully implemented or validated, creating inconsistencies.
+
+Recommendation:  
+Fully implement or remove support for meta-transactions.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #8: Variable shadowing of the owner variable  
+Severity : Warning  
+Description:  
+Shadowing of the `owner` variable may lead to confusing or unintended logic.
+
+Recommendation:  
+Rename variables to avoid shadowing critical identifiers.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #9: Floating pragma  
+Severity : Warning  
+Description:  
+Usage of a floating pragma (`^`) may introduce vulnerabilities from future compiler versions.
+
+Recommendation:  
+Lock to a specific Solidity version.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #10: Usage of solc optimizer  
+Severity : Warning  
+Description:  
+The Solidity optimizer is used without thorough documentation or testing of its impact.
+
+Recommendation:  
+Benchmark and document optimizer settings or consider disabling for early-stage audits.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #11: Missing package-lock.json  
+Severity : Warning  
+Description:  
+The absence of `package-lock.json` may result in inconsistent dependency installations.
+
+Recommendation:  
+Include a lock file to ensure deterministic builds.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #12: Unnecessary call for currentAssetPrice  
+Severity : Informational  
+Description:  
+A redundant call to `currentAssetPrice` adds unnecessary computation.
+
+Recommendation:  
+Remove or refactor the call unless needed for logic or gas optimization.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #13: Functions that could be external  
+Severity : Informational  
+Description:  
+Some functions are declared as `public` but could be marked `external` to save gas.
+
+Recommendation:  
+Mark non-internal and non-inherited functions as `external` when appropriate.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================
+Finding #14: Typos  
+Severity : Informational  
+Description:  
+Minor typos were found in comments and documentation.
+
+Recommendation:  
+Correct all typos for clarity and professionalism.
+
+Repository  
+URL: https://github.com/ZunamiProtocol/ZunamiStable  
+Commit: 53dc20a  
+========================================================================

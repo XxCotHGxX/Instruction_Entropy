@@ -1,0 +1,151 @@
+========================================================================
+Finding #1: Cross-chain replay attack vulnerability  
+Severity : High  
+Description:  
+The autoEarn function generates a signature verification hash without
+including the chain ID in its calculation. This implementation enables potential
+signature replay attacks when the module is deployed across multiple chains.
+Listing 1. Excerpt from FluidkeyEarnModule
+291 bytes32 hash = keccak256(abi.encodePacked(token, amountToSave, safe,nonce));
+
+Recommendation:  
+Include the chain ID in the hash calculation for signature verification to
+ensure signatures are only valid for the specific chain they were intended for.  
+
+Repository URL: https://github.com/fluidkeyhq/earn-module/commit/665108  
+========================================================================
+Finding #2: MAX_TOKENS limit bypass via setConfig leads to unintended module persistence  
+Severity : Medium  
+Description:  
+The module implements a MAX_TOKENS limit in the onInstall function to restrict
+the number of token configurations per Safe. However, this limit can be
+bypassed using the setConfig function, which lacks the same validation
+check. This allows a Safe to configure more tokens than intended, leading to
+the following issues:
+• the MAX_TOKENS limit becomes ineffective as a security control;
+• excessive configurations persist and remain active after module removal;
+• the autoEarn function remains callable for persisted configurations even
+when isInitialized returns false, allowing unauthorized token
+movements; and
+• while this vulnerability requires an authorized relayer, which reduces
+exploitation likelihood, it represents an architectural flaw where an
+uninstalled module retains functionality.
+
+Recommendation:  
+Add a validation check in the setConfig function to ensure the number of
+configurations does not exceed the MAX_TOKENS limit. Additionally, implement
+proper cleanup logic in the onUninstall function to ensure all configurations
+are completely removed from the system
+
+Repository URL: https://github.com/fluidkeyhq/earn-module/commit/665108  
+========================================================================
+Finding #3: Unchecked return value  
+Severity : Warning  
+Description
+The execTransactionFromModule call does not check its return value. This
+function returns a boolean indicating success or failure, and the missing
+validation could mask potential failures in the operation.
+Listing 2. Excerpt from FluidkeyEarnModule
+351 if (token == address(ETH)) {
+352 safeInstance.execTransactionFromModule(
+353 address(wrappedNative),
+354 amountToSave,
+355 abi.encodeWithSelector(IWrappedNative.deposit.selector),
+356 0
+357 );
+
+Recommendation
+Add a check for the return value of execTransactionFromModule and revert the
+transaction if the wrapping operation fails. 
+
+Repository URL: https://github.com/fluidkeyhq/earn-module/commit/665108  
+========================================================================
+Finding #4: Module installation allows empty configuration  
+Severity : Warning  
+Description
+The onInstall function does not validate whether the _configs array passed
+in the data parameter is empty. If an empty array is provided, the function will
+still proceed with the initialization process and emit the ModuleInitialized
+event without setting up any configurations.
+
+Recommendation
+Add validation to check if the input array is empty and handle this case
+appropriately  
+
+Repository URL: https://github.com/fluidkeyhq/earn-module/commit/665108  
+========================================================================
+Finding #5: Misleading event in deleteConfig  
+Severity : Warning  
+Description
+The function deleteConfig emits the same event as the setConfig function,
+which can lead to misleading event logs.
+
+Recommendation
+Add a new event ConfigDeleted for the deleteConfig function.  
+
+Repository URL: https://github.com/fluidkeyhq/earn-module/commit/665108  
+========================================================================
+Finding #6: Variable can be immutable  
+Severity : Informational  
+Description
+The wrappedNative address is declared as a state variable but is only set once
+during initialization and never modified afterwards. This variable can be
+declared as immutable to save gas costs, as immutable variables are cheaper to
+read than regular state variables.
+Listing 3. Excerpt from FluidkeyEarnModule
+57 address public wrappedNative;
+Listing 4. Excerpt from FluidkeyEarnModule
+59 constructor(address _authorizedRelayer, address _wrappedNative)
+  Ownable(msg.sender) {
+60 authorizedRelayers[_authorizedRelayer] = true;
+61 emit AddAuthorizedRelayer(_authorizedRelayer);
+62 wrappedNative = _wrappedNative;
+63 }
+
+Recommendation
+Change the declaration to use immutable.  
+
+Repository URL: https://github.com/fluidkeyhq/earn-module/commit/665108  
+========================================================================
+Finding #7: Incorrect usage of immutable instead of constant  
+Severity : Informational  
+Description
+The ETH address is declared as immutable when it should be constant since it’s
+a fixed value that never changes and is known at compile time.
+Listing 5. Excerpt from FluidkeyEarnModule
+56 address public immutable ETH = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
+Recommendation
+Change the declaration to use constant. 
+
+Repository URL: https://github.com/fluidkeyhq/earn-module/commit/665108  
+========================================================================
+Finding #8: Misleading documentation  
+Severity : Informational  
+Description
+The documentation for the prevToken parameter is unclear as it doesn’t
+explain that the parameter is a pointer in a linked list implementation.
+Listing 6. Excerpt from FluidkeyEarnModule
+220 * @param prevToken address of the token stored before the token to be
+ deleted
+
+Recommendation
+Update the parameter documentation to clearly explain its role in the linked
+list structure.
+
+Repository URL: https://github.com/fluidkeyhq/earn-module/commit/665108  
+========================================================================
+Finding #9: Unnecessary external call  
+Severity : Informational  
+Description
+The getAllConfigs function makes an unnecessary external call to
+this.getTokens() instead of directly accessing the internal state. This pattern
+forces the EVM to make an external call to the same contract, which is more
+gas expensive than directly accessing the data.
+
+Recommendation
+Remove the external call and use direct internal access to the tokens
+mapping  
+
+Repository URL: https://github.com/fluidkeyhq/earn-module/commit/665108  
+========================================================================

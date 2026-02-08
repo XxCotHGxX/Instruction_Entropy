@@ -1,0 +1,144 @@
+========================================================================
+Finding #1: Two-phase Owner transfer
+Severity : Medium
+Description:
+The contract implements a one-step owner transfer process. This may lead to accidental or malicious takeover of the contract if the ownership is transferred to an incorrect address.
+
+Recommendation:
+Adopt a two-step ownership transfer pattern (propose → accept) to ensure that ownership is explicitly claimed by the new owner.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================
+Finding #2: Lack of data validation in init functions
+Severity : Medium
+Description:
+Initialization functions lack sufficient validation of input parameters, which may result in misconfigured contracts during deployment.
+
+Recommendation:
+Add strict input validation (e.g., non-zero address checks) to all initialization functions.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================
+Finding #3: Owner Can Cause DoS
+Severity : Medium
+Description:
+The contract owner can unintentionally or maliciously cause denial-of-service scenarios by invoking privileged functions incorrectly.
+
+Recommendation:
+Restrict or safeguard administrative functions with additional checks to prevent misuse or accidental execution.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================
+Finding #4: Data Validation in sendNFTs()
+Severity : Medium
+Description:
+Insufficient data validation in the `sendNFTs()` function may allow invalid cross-chain NFT transfers or system instability.
+
+Recommendation:
+Include rigorous validation checks on all inputs, especially when NFTs are transferred across chains.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================
+Finding #5: Lack of logging
+Severity : Low
+Description:
+Some state-changing functions do not emit events, which hinders auditability and off-chain tracking of important actions.
+
+Recommendation:
+Emit relevant events for all major state changes and user interactions.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================
+Finding #6: Constructor Without Initializer
+Severity : Low
+Description:
+Contracts using OpenZeppelin's upgradeable pattern have constructors without proper initializers, which may result in incomplete contract setup.
+
+Recommendation:
+Use `initializer` modifier from OpenZeppelin Upgradeable libraries instead of constructors.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================
+Finding #7: Upgradeable Contract Without Storage Gap
+Severity : Low
+Description:
+The contract lacks a reserved storage gap, which may cause storage layout collisions in future upgrades.
+
+Recommendation:
+Reserve a gap using `uint256[50] private __gap;` to allow safe future upgrades.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================
+Finding #8: Usage of solc optimizer
+Severity : Warning
+Description:
+The optimizer settings were not specified clearly or may be suboptimal, affecting debugging or gas efficiency.
+
+Recommendation:
+Clearly document and test optimizer settings across environments to avoid unexpected behavior.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================
+Finding #9: Owner role can be renounced
+Severity : Warning
+Description:
+The contract allows ownership to be renounced without ensuring alternative access control, which may make the contract unmanageable.
+
+Recommendation:
+Add safeguards to prevent full renouncement unless a governance or fallback mechanism is in place.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================
+Finding #10: Exposure of sensitive data
+Severity : Warning
+Description:
+Some internal contract data is unnecessarily exposed through public variables or functions, potentially aiding attackers.
+
+Recommendation:
+Restrict visibility of sensitive data or provide controlled getter functions.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================
+Finding #11: Floating pragma
+Severity : Warning
+Description:
+The use of a floating pragma (`^0.8.0`) can lead to compilation with unintended versions of the Solidity compiler.
+
+Recommendation:
+Pin the pragma version (e.g., `pragma solidity 0.8.17`) to ensure predictable and secure behavior.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================
+Finding #12: Inconsistency of safeMint And transferFrom
+Severity : Warning
+Description:
+There is inconsistency in the handling of `safeMint()` and `transferFrom()` functions, which could lead to unexpected NFT behavior.
+
+Recommendation:
+Ensure consistent access control, validation, and logic between minting and transferring operations.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================
+Finding #13: Abstract Contract Named As Interface
+Severity : Informational
+Description:
+An abstract contract is misleadingly named as an interface, which can confuse developers and auditors.
+
+Recommendation:
+Follow naming conventions—use `Abstract` or `Base` suffix for abstract contracts and reserve `Interface` for pure interfaces.
+
+Repository
+URL: https://github.com/MintDAO (private repo, commit 5ad4033)
+========================================================================

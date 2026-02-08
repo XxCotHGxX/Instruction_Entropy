@@ -1,0 +1,89 @@
+========================================================================
+Finding #1: Possibility to manipulate a voting process while using the fixed-weights addin
+Severity : Critical
+Description:
+An attacker can manipulate the voting process by using the fixed-weights addin to increase their vote weight, potentially deciding any proposal independently.
+
+Recommendation:
+Implement stricter validation and control mechanisms to prevent excessive vote weight assignment.
+
+Repository
+URL: https://github.com/neonlabsorg/neon-spl-governance
+========================================================================
+Finding #2: When using the addin-vesting (for realm), the first user will be able to decide on any proposal after his deposit
+Severity : Critical
+Description:
+In the addin-vesting module, the first user to deposit can gain enough voting power to unilaterally decide proposals, posing a major governance risk.
+
+Recommendation:
+Introduce a delay or progressive weighting mechanism for initial deposits to mitigate governance manipulation.
+
+Repository
+URL: https://github.com/neonlabsorg/neon-spl-governance
+========================================================================
+Finding #3: Possibility to decide on a proposal without a sufficient voting weight
+Severity : Medium
+Description:
+Users may be able to decide on proposals without actually holding the required voting weight, undermining governance integrity.
+
+Recommendation:
+Add a strict check to ensure that only users with adequate voting power can influence proposal outcomes.
+
+Repository
+URL: https://github.com/neonlabsorg/neon-spl-governance
+========================================================================
+Finding #4: Possibility of a DoS attack that prevents the creation of a valid maintenance record
+Severity : Medium
+Description:
+Attackers could potentially perform a denial-of-service (DoS) by blocking the creation of valid maintenance records, disrupting system functionality.
+
+Recommendation:
+Include validation checks and redundancy to ensure the system remains operable even under attempted DoS scenarios.
+
+Repository
+URL: https://github.com/neonlabsorg/neon-spl-governance
+========================================================================
+Finding #5: Using find_program_address instead of create_program_address
+Severity : Low
+Description:
+The use of `find_program_address` instead of `create_program_address` can introduce unnecessary complexity or ambiguity in program derivation logic.
+
+Recommendation:
+Switch to `create_program_address` where appropriate to simplify and clarify address derivation logic.
+
+Repository
+URL: https://github.com/neonlabsorg/neon-spl-governance
+========================================================================
+Finding #6: Unused account
+Severity : Informational
+Description:
+There is an account declared in the code that is never used, which may cause confusion for maintainers or hint at incomplete logic.
+
+Recommendation:
+Remove unused accounts to clean up the code and improve clarity.
+
+Repository
+URL: https://github.com/neonlabsorg/neon-spl-governance
+========================================================================
+Finding #7: Misleading docs
+Severity : Informational
+Description:
+Some documentation does not accurately describe the behavior of the code, which can mislead developers or auditors.
+
+Recommendation:
+Update documentation to reflect the actual logic and structure of the code accurately.
+
+Repository
+URL: https://github.com/neonlabsorg/neon-spl-governance
+========================================================================
+Finding #8: Hanging accounts
+Severity : Informational
+Description:
+There are accounts that are left open or unused in some flows, which can waste space or introduce maintenance difficulties.
+
+Recommendation:
+Ensure that all account flows are cleaned up properly and unused accounts are closed or omitted where not needed.
+
+Repository
+URL: https://github.com/neonlabsorg/neon-spl-governance
+========================================================================

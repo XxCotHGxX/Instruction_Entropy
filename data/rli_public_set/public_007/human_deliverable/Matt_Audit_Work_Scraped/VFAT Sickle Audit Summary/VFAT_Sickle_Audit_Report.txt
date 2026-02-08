@@ -1,0 +1,1100 @@
+========================================================================
+Finding #1: Whitelisted callers can perform delegatecall on every Sickle
+ 
+Severity : High
+
+Description:  
+
+The Sickle contract inherits from Multicall, which implements the multicall
+logic using delegatecall. The Multicall contract verifies if the caller is
+whitelisted by calling the isWhitelistedCaller function on the SickleRegistry
+contract. Similarly, the call target is verified by calling the
+isWhitelistedTarget function on the SickleRegistry contract. Since the
+registry is a singleton contract and it is stored in the immutable variable in
+the Multicall contract, the whitelisted callers can perform operations on
+every deployed Sickle contract. This may be misused either by a malicious
+caller that was mistakingly whitelisted by the SickleRegistry admin, or by the
+admin themselves by adding an arbitrary malicious target and a malicious
+caller. For example, this may hapeen in the case of private key leakage of the
+admin account. In this case, all user wallets can be drained resulting in loss of
+all users' assets
+
+Recommendation:  
+
+Implement one or more of the following mitigations:
+1. Implement a time-delay mechanism for adding new whitelisted callers and
+targets. This gives users time to react if suspicious addresses are
+whitelisted.
+2. Split the admin role into multiple roles with different permissions:
+◦ One role for managing whitelisted callers;
+◦ One role for managing whitelisted targets;
+◦ Require multiple signatures to make changes.
+3. Add an emergency pause functionality that can quickly disable all
+delegatecalls across all Sickle contracts.
+4. Remove the delegatecall entirely and implement specific approved
+functions directly in the Sickle contract.
+5. Move whitelisting control to individual Sickle contract owners:
+◦ Each Sickle owner maintains their own whitelist of approved callers and
+targets.
+◦ Registry only stores global defaults that owners can accept or reject.
+◦ Owners can opt-in to global whitelist or manage their own permissions  
+
+Repository URL: https://github.com/vfat-tools/vfat-sickle-audit/commit/1c20e7e  
+========================================================================
+Finding #2: Referral code setter can be front-run  
+
+Severity : Medium  
+
+Description:
+  
+The SickleRegistry contract allows for assigning an address to each referral
+code. If an address is already assigned, it cannot be changed:
+Listing 1. Excerpt from SickleRegistry
+104 function setReferralCode(bytes32 referralCode) external {
+105 if (referralCodes[referralCode] != address(0)) {
+106 revert InvalidReferralCode();
+107 }
+108 
+109 referralCodes[referralCode] = msg.sender;
+110 emit SickleRegistryEvents.ReferralCodeCreated(referralCode, msg.sender);
+111 }
+The setReferralCode function, however, can be front-run and a malicious
+referer can be assigned. This way, the malicious address can steal all the
+referral rewards
+
+Recommendation:  
+
+Implement one of these approaches:
+• Use a commit-reveal pattern where users first commit to a hash of their
+referral code and address, then reveal it after a time delay.
+• Make referral codes unique to each user by incorporating the sender’s
+address into the referral code generation.
+• Add a small registration fee to make front-running economically
+unattractive.
+
+Repository URL: https://github.com/vfat-tools/vfat-sickle-audit/commit/1c20e7e  
+========================================================================
+Finding #3: Non-contract registries can cause reverts 
+ 
+Severity : Low  
+
+Description:  
+
+In the ConnectorRegistry contract, the connectorOf function returns the
+address of the connector for the provided target. First, the contracts checks
+if the connector is registrered in the connectors_ mapping. If it is, the
+connector address is returned to the callee. Otherwise, the algorithms
+iterates over all items in the customRegistries array and calls the
+connectorOf(target) function on each registry. The hasConnector function has
+similar logic.
+The call is performed in the try-catch clause. If the external call reverts, the
+error is caught and ignored. However, there are cases that are not caught by
+the try-catch statement, and one of these cases is when the callee is an EOA.
+If by any mistake an address without code is added to a list of custom
+registries during the addCustomRegistry call, the connectorOf and hasConnector
+functions will revert. 
+
+Recommendation: 
+ 
+Add validation of the provided addresses to the addCustomRegistry function.
+Make sure address is a contract. Implement off-chain verification and
+monitoring to avoid situations like this.
+
+Repository URL: https://github.com/vfat-tools/vfat-sickle-audit/commit/1c20e7e  
+========================================================================
+Finding #4: Incomplete data validation for NFT positions 
+ 
+Severity : Warning  
+
+Description:  
+
+The NftSettingsRegistry lacks comprehensive data validation for position
+settings for multiple scenarios:
+• No validation that triggerTickLow >= MIN_TICK and triggerTickHigh ⇐
+MAX_TICK;
+• No validation that triggerTickLow < triggerTickHigh;
+• No validation that exitTokenOutLow and exitTokenOutHigh are valid contract
+addresses (not EOAs or zero addresses) when autoExit is enabled;
+• No validation that harvestTokenOut is a valid contract address (not EOAs or
+zero address) when rewardBehavior is Harvest;
+• No minimum/maximum boundaries for bufferTicksBelow and
+bufferTicksAbove;
+• No validation for delayMin being within reasonable bounds;
+• No validation that the specified pool address is valid and corresponds to
+the NFT position’s pool;
+• No checks to ensure exit triggers are outside of rebalance cutoffs for
+logical operation;
+• No validation that token addresses are actual contracts;
+• Incomplete validation of token address relationships with pool tokens;
+• No validation that configured ticks align with the pool’s tick spacing
+requirements;
+• Only width is validated but not the actual tick values;
+• No validation that the NFT position exists and belongs to the caller;
+• If both autoExit and autoRebalance are true:
+• triggerTickLow should be ⇐ cutoffTickLow (exit before stop-loss), and
+• triggerTickHigh should be >= cutoffTickHigh (exit before stop-loss);
+• The conflict when rewardBehavior == Compound and autoExit == true is not
+handled.
+
+Recommendation:
+  
+Evaluate all possible scenarios and create a comprehensive list of invariants.
+Implement the missing validations.
+
+Partial solution 1.1
+
+The issue was partially fixed with the following comment.
+• Token/EOA address validation is deemed unnecessary
+• DelayMin has reasonable bounds by virtue of being a uint8
+• Pool address validation / token address relationship with
+pool tokens is not trivial so deemed impractical
+• Configured ticks do not need to align with tick spacing
+• Exit before rebalance cutoff is not a conflict
+• Compound and auto-exit do not conflict
+In general, mistakes in NFT settings are not critical since
+they only require an update, we try to strike a balance
+between warning users early (by reverting on obvious errors)
+and not requiring too much computation.
+
+Repository URL: https://github.com/vfat-tools/vfat-sickle-audit/commit/1c20e7e  
+========================================================================
+Finding #5: Duplicate Sickle retrieval  
+
+Severity : Warning  
+
+Description:  
+
+The NftSettingsRegistry and PositionSettingsRegistry have the
+_get_sickle_by_owner function with the duplicated logic. 
+
+Recommendation:  
+
+Move the Sickle retrieval to the SickleFactory contract.
+
+Acknowledgment 1.1
+
+The issue was acknowledged with the following comment.
+Duplication in two contracts is acceptable vs the cost of
+amending (redeploying all Sickles).
+
+Repository URL: https://github.com/vfat-tools/vfat-sickle-audit/commit/1c20e7e  
+========================================================================
+Finding #6: Potential underflow or overflow in tick range calculation  
+
+Severity : Warning  
+
+Description:  
+
+In NftSettingsRegistry, the validateRebalanceFor function calculates the
+allowed tick range by calculating the bounds using the buffer:
+Listing 2. Excerpt from NftSettingsRegistry
+125 if (
+126 tick >= tickLower - int24(config.bufferTicksBelow)
+127 && tick < tickUpper + int24(config.bufferTicksAbove)
+128 ) {
+129 revert TickWithinRange();
+130 }
+Since there is no clipping for extreme values, it is possible for tickLower -
+int24(config.bufferTicksBelow) to underflow if tickLower is very small, or
+tickUpper + int24(config.bufferTicksAbove) to overflow if tichUpper is large.
+
+Recommendation
+
+Add bounds checking to ensure the buffer calculations cannot
+overflow/underflow.
+
+Fix 1.1
+
+The issue was fixed with the following comment.
+Ticks and bufferTicksAbove/Below are within MIN_TICK /
+MAX_TICK now so underflow and overflow are no longer possible
+
+Repository URL: https://github.com/vfat-tools/vfat-sickle-audit/commit/1c20e7e  
+========================================================================
+Finding #7: Variable shadowing
+
+Severity : Warning
+
+Description
+
+In the PositionSettingsRegistry contract, the constructor’s `timelockAdmin
+argument shadows the storage variable inherited from the TimelockAdmin
+contract. This may lead to confusion during code review and maintenance,
+and could potentially cause bugs if the shadowed variable is accessed
+incorrectly.
+Also:
+• SickleFactory::_deploy, admin variable`;
+• SickleFactory::_getSickle, admin variable`;
+• SickleFactory::predict, admin variable`;
+• SickleFactory::sickles, admin variable`;
+• SickleFactory::admins, admin variable`;
+• SickleFactory::getOrDeploy, admin variable`.
+
+Recommendation
+
+Rename the arguments to avoid shadowing storage variables.
+
+Fix 1.1
+
+The issue was fixed by renaming admin parameter to owner.
+
+Repository URL: https://github.com/vfat-tools/vfat-sickle-audit/commit/1c20e7e  
+========================================================================
+Finding #8: W5: Insufficient data validation in the
+PositionSettingsRegistry contract
+
+Severity : Warning  
+
+Description
+
+The PositionSettingsRegistry contract lacks several critical data validations:
+• the constructor does not validate zero addresses for input parameters;
+• the settings.pair and settings.router addresses are not validated for zero
+addresses, and their relationship is not verified;
+• the farm.stakingContract address is not validated for zero addresses; and
+• the harvestTokenOut, exitTokenOutLow, and exitTokenOutHigh tokens may
+differ from pool tokens without a required swapping path.
+
+
+Recommendation
+
+Implement comprehensive data validation by:
+• adding zero-address checks for all address parameters;
+• validating relationships between interdependent parameters; and
+• ensuring swapping paths exist when tokens differ from pool tokens.
+
+Fix 1.1
+
+The issue was fixed by adding extra checks.
+
+Repository URL: https://github.com/vfat-tools/vfat-sickle-audit/commit/1c20e7e  
+========================================================================
+Finding #8: Incorrect price calculation in PositionSettingsRegistry 
+ 
+Severity : Warning  
+
+Description:  
+
+The PositionSettingsRegistry contract retrieves the current pool price by
+calling getAmountOut with the amountIn equal to 1 wei:
+Listing 3. Excerpt from PositionSettingsRegistry
+275 uint256 amountOut0 = connector.getAmountOut(
+276 GetAmountOutParams({
+277 router: address(settings.router),
+278 lpToken: address(settings.pair),
+279 tokenIn: token0,
+280 tokenOut: token1,
+281 amountIn: 1
+282 })
+283 );
+284 
+285 if (amountOut0 > 0) {
+286 price = amountOut0 * 1e18;
+287 } else {
+288 uint256 amountOut1 = connector.getAmountOut(
+289 GetAmountOutParams({
+290 router: address(settings.router),
+291 lpToken: address(settings.pair),
+292 tokenIn: token1,
+293 tokenOut: token0,
+294 amountIn: 1
+295 })
+296 );
+297 if (amountOut1 == 0) {
+298 revert InvalidPrice();
+299 }
+300 price = 1e18 / amountOut1;
+However, due to the small input amount, the getAmountOut may return zero swapping in both directions when the pool price is close to 1. This is the case
+for stablecoin pairs. For instance, the USDC/USDT Uniswap v2 pool very similar
+reserves for both tokens, and calling the getAmountOut returns zero for both
+directions. In this case, the price validation on line 297 will not succeed, and
+the transaction will revert with the InvalidPrice error.
+For example, the USDC/USDT pool on calling getReserves() returns
+2359110923152 and 2363067862194. If we call the getAmountOut function on the
+Uniswap v2 router with amountIn = 1 and these reserves, the return value is
+zero for both swap directions.
+Another problem is extreme values. If the return amount is larger than 1e18,
+the price calculation on line 300 will be zero, and the transaction will revert
+with the InvalidPrice error
+
+Recommendation:  
+
+Since the amountIn is only used for price calculations and not the actual trade,
+use a larger value of amountIn to avoid the precision loss. Modify the price
+calculation accordingly. An alternative approach for pools with two tokens is
+to calculate the price based on the pool reserves directly.
+
+Fix 1.1
+
+The issue was fixed with the following comment.
+Has since been refactored to a getPoolPrice call.
+
+Repository URL: https://github.com/vfat-tools/vfat-sickle-audit/commit/1c20e7e
+=================================================================================
+Finding #9 :W7: Incorrect usage of Initializable 
+Impact: Warning Likelihood: N/A
+Target: Sickle.sol Type: Reinitialization
+
+Description
+
+The Sickle contract inherits from the SickleStorage and Multicall contracts.
+The Multicall constructor is marked with the initializer modifier, and the
+Sickle constructor also has the same keyword. Moreover, the Sickle contract
+also has a separate initialize function that is also marked initializer. When
+a new Sickle is deployed, the Initializable empty constructor is called first,
+then the initializer modifier on the Multicall constructor is invoked. Finally,
+the initializer modifier on the Sickle constructor is run, and the constructor
+is called.
+The Initializable contract warns against this explicitly:
+When used with inheritance, manual care must be taken to not
+invoke a parent initializer twice or to ensure that all
+initializers are idempotent. This is not verified
+automatically as constructors are by Solidity.
+The implemented approach will lead to multiple issues:
+• The initialization logic will be executed multiple times;
+• The initialization functions will be callable when they shouldn’t be;
+• Potential unexpected behavior in the proxy upgrade pattern.
+The correct approach is to have one initializer per contract. If base contracts
+are abstract or expected to be inherited from, the onlyInitializing modifier
+should be used instead of initializer. The constructors are not initializers,
+and to prevent the unintended usage of the initializer, the
+Ackee Blockchain Security 34 of 73
+_disableInitializers function must be called. To implement this approach,
+use the following steps:
+1. Remove the initializer keyword from the Multicall constructor.
+2. If any additional initializing logic must be added in the Multicall contract,
+create a separate _Multicall_initialize function on the Multicall
+contract and mark it with the onlyInitializing keyword. Make sure you
+call this function in all child contracts.
+3. Remove the initializer keyword from the Sickle constructor.
+4. Add a call to the _disableInitializers function in the Sickle constructor.
+5. If the Sickle contract is inherited by other contracts, make sure the
+_Sickle_initialize function is internal and mark it with onlyInitializing
+keyword.
+
+Recommendation
+
+Implement the correct approach to the Initializable contracts.
+
+Fix 1.1
+
+The issue was fixed by the client with the following comment.
+Multicall no longer has an initializer.
+=================================================================================
+Finding #10 : W9: One-step ownership transfer
+
+Impact: Warning Likelihood: N/A
+Target: SickleFactory.sol Type: Access control
+
+Description
+
+The SickleFactory contract inherits from Admin where the admin role is stored.
+The setAdmin function of the Admin contract sets a new admin address in one
+step. If the address is set incorrectly, there is a risk of losing access to the
+contract.
+
+Recommendation
+
+Implement two-step admin priviledge transfer by using the Ownable2Step
+contract from the OpenZeppelin framework, or by implementing an in-house
+solution.
+
+Acknowledgment 1.1
+
+The issue was acknowledged with the following comment.
+This is not a single step as we use a multisig as admin.
+=================================================================================Finding #11 : W10: Duplicate tokens in feeTokens array can lead
+to inconsistent fee calculation
+
+Impact: Warning Likelihood: N/A
+Target: FeesLib.sol Type: Data validation
+
+Description
+
+The chargeFees function of the FeesLib contract calls the chargeFee function
+in a loop with the feeBasis parameter set to zero:
+Listing 4. Excerpt from FeesLib
+84 for (uint256 i = 0; i < feeTokens.length;) {
+85 chargeFee(strategy, feeDescriptor, feeTokens[i], 0);
+86 unchecked {
+87 i++;
+88 }
+89 }
+The Sickle contract calls functions of the FeesLib contract using
+delegatecall. Therefore, the chargeFee function then uses the balance of the
+caller for the fee token as the feeBasis:
+Listing 5. Excerpt from FeesLib
+47 if (feeBasis == 0) {
+48 if (feeToken == ETH) {
+49 uint256 wethBalance = weth.balanceOf(address(this));
+50 if (wethBalance > 0) {
+51 weth.withdraw(wethBalance);
+52 }
+53 feeBasis = address(this).balance;
+54 } else {
+55 feeBasis = IERC20(feeToken).balanceOf(address(this));
+56 }
+57 }
+If the input feeTokens array, the input parameter to the chargeFees function,
+has duplicates, the charged fee for later calls to the chargeFee function will be
+influenced by the former calls, making the fee structure of the protocol
+dependent on the order in which feeTokens are provided. This reduces the
+transparency of the fee scheme of the protocol.
+
+Recommendation
+
+Make sure the input feeTokens array does not have duplicates.
+
+Acknowledgment 1.1
+
+The issue was acknowledged with the following comment.
+Acknowledged but is checked offchain.
+=================================================================================
+W11: Inconsistent handling of ETH and WETH across the FeesLib contract
+
+Impact: Warning Likelihood: N/A
+Target: FeesLib.sol Type: Logic error
+
+Description
+
+The FeesLib contract inconsistently handles native ETH and wrapped ETH
+(WETH) tokens across different functions, creating potential confusion and
+calculation errors:
+1. In the chargeFee function, when handling native ETH, the code unwraps any
+WETH balance and combines it with the native balance for fee calculation:
+Listing 6. Excerpt from FeesLib
+48 if (feeToken == ETH) {
+49 uint256 wethBalance = weth.balanceOf(address(this));
+50 if (wethBalance > 0) {
+51 weth.withdraw(wethBalance);
+52 }
+53 feeBasis = address(this).balance;
+2. However, when WETH address is provided directly to chargeFee, it’s treated
+as a standard ERC-20 token, ignoring any native ETH balance:
+Listing 7. Excerpt from FeesLib
+53 feeBasis = address(this).balance;
+54 } else {
+55 feeBasis = IERC20(feeToken).balanceOf(address(this));
+56 }
+3. The getBalance function takes the opposite approach - when checking ETH
+balance, it returns only the WETH balance and ignores native ETH:
+Ackee Blockchain Security 40 of 73
+Listing 8. Excerpt from FeesLib
+92 function getBalance(
+93 Sickle sickle,
+94 address token
+95 ) public view returns (uint256) {
+96 if (token == ETH) {
+97 return weth.balanceOf(address(sickle));
+98 }
+99 return IERC20(token).balanceOf(address(sickle));
+100 }
+This inconsistent treatment of ETH/WETH may lead to incorrect fee
+calculations, unexpected behavior, and implementation errors in contracts
+using this library.
+
+Recommendation
+
+Standardize the handling of ETH and WETH across the contract. Decide on a
+consistent approach and ensure all functions follow the same logic for
+ETH/WETH handling.
+
+Acknowledgment 1.1
+
+The issue was acknowledged with the following comment.
+These functions serve different purposes. chargeFees works
+both inbound and outbound, in the inbound case it will be
+charging directly on ETH (user sends ETH → gets charged
+fees). In the outbound case it has WETH which it needs to
+withdraw to ETH first before charging fees (and then sending
+the remainder back to the user)
+================================================================================
+W12: Ambiguous handling of the native value in the SwapLib contract
+
+Impact: Warning Likelihood: N/A
+Target: SwapLib.sol Type: Logic error
+
+Description
+The SwapLib contract implements two swapping functions: swap and
+swapMultiple. The swap function is marked payable, while swapMultiple is not.
+Moreover, the internal _swap function does not handle the native token as the
+input token. If the zero address or the
+0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE value (which is used in the
+FeesLib contract) is passed in the swapParams.tokenIn input parameter, the
+call will revert either on getting the balance:
+Listing 9. Excerpt from SwapLib
+49 if (swapParams.amountIn == 0) {
+50 swapParams.amountIn = IERC20(tokenIn).balanceOf(address(this));
+51 }
+or on the approval:
+Listing 10. Excerpt from SwapLib
+58 SafeTransferLib.safeApprove(tokenIn, swapParams.router, 0);
+
+Recommendation
+
+Decide on using the native token as the input token. If the support is
+intended, wrap the native value into the WETH token in the _swap function and
+implement tracking of msg.value for all swaps in the swapMultiple function. If
+the support is not required, check if the input token is a valid ERC-20 token
+
+Acknowledgment 1.1
+
+The issue was acknowledged with the following comment.
+As audited the SwapLib contract only handles WETH swaps
+(0xEee is wrapped at an earlier step by TransferLib, and
+0x000 is rejected)
+=================================================================================
+W13: Misleading inheritance
+
+Impact: Warning Likelihood: N/A
+Target: Automation.sol Type: Code quality
+
+Description
+The Automation contract inherits from Admin and NonDelegateMulticall. The
+Admin contract allows for setting an admin of the contract, which is set during
+the creation and used in setApprovedAutomator and revokeApprovedAutomator
+functions through the onlyAdmin modifier.
+However, the second parent contract, NonDelegateMulticall, also inherits from
+SickleStorage, which in turn inherits from Initializable. This inheritance chain
+has multiple problems.
+First, the Initializable contract is intended to be used for upgradeable
+contracts; however, Automation is not upgradeable. Having an initializer in a
+static contract is misleading and may become a source of mistakes in the
+future.
+Second, the SickleStorage implements two privileged roles, owner and
+approved. These roles must be set up in the _SickleStorage_initialize
+function, which should be called in the initializer. The NonDelegateMulticall
+contract has the constructor marked with the initializer keyword, however,
+it does not call _SickleStorage_initialize. Therefore, the storage variables
+owner and approved remain uninitialized, taking up two storage slots. Moreover,
+since the default values of these variables are zero addresses, the
+setApproved function of the SickleStorage contract, which has the onlyOwner
+modifier, cannot be called by anyone, effectively becoming dead code.
+Finally, the Automation contract implements four privileged roles: admin, owner,
+approvedAutomator, and approved. Two of these roles cannot be used and may
+Ackee Blockchain Security 44 of 73
+lead to confusion of the users and developers who want to extend the
+functionality of the Automation contract in the future.
+
+Recommendation
+Analyze the inheritance chain. Clearly distinguish between upgradeable and
+non-upgradeable contracts. Modularize the protocol and follow the
+Separation of Concerns pattern. For example, the NonDelegateMulticall
+contract can be separated from the SickleStorage contract and be added to
+the inheritance chain of child contracts only if needed.
+
+Fix 1.1
+The issue was fixed with the following comment.
+NonDelegeateMulticall no longer inherits from SickleStorage.
+=================================================================================
+W14: No input array length validation
+
+Impact: Warning Likelihood: N/A
+Target: ConnectorRegistry.sol,
+Automation.sol
+Type: Data validation
+
+Description
+1. The setConnectors and updateConnectors functions take two arrays, targets
+and connectors. These arrays must have the same length. However, there
+are no validations, which may lead to an OutOfBounds panic.
+2. The Automation contract provides an interface for multicall to strategies.
+Each function takes multiple arrays as input parameters for these
+multicalls. These arrays must be of the same length. While most
+parameters are correctly validated, the following parameters lack such
+validation:
+◦ the farms parameter in the harvestFor function:
+Listing 11. Excerpt from Automation
+178 function harvestFor(
+179 IAutomation[] memory strategies,
+180 Sickle[] memory sickles,
+181 Farm[] memory farms,
+182 HarvestParams[] memory params,
+183 address[][] memory sweepTokens
+184 ) external onlyApprovedAutomator {
+185 uint256 strategiesLength = strategies.length;
+186 if (
+187 strategiesLength != sickles.length
+188 || strategiesLength != params.length
+189 || strategiesLength != sweepTokens.length
+190 ) {
+
+• the inPlace parameter in the compoundFor function:
+
+Listing 12. Excerpt from Automation
+286 function compoundFor(
+287 INftAutomation[] memory strategies,
+288 Sickle[] memory sickles,
+289 NftPosition[] memory positions,
+290 NftCompound[] memory params,
+291 bool[] memory inPlace,
+292 address[][] memory sweepTokens
+293 ) external onlyApprovedAutomator {
+294 uint256 strategiesLength = strategies.length;
+295 if (
+296 strategiesLength != sickles.length
+297 || strategiesLength != positions.length
+298 || strategiesLength != params.length
+299 || strategiesLength != sweepTokens.length
+300 ) {
+301 revert InvalidInputLength();
+302 }
+
+Recommendation
+Add validation to ensure that the input arrays have the same length.
+
+Fix 1.1
+The issue was fixed by adding the length validation.
+================================================================================
+W15: No data validation on registry adding and updates
+
+Impact: Warning Likelihood: N/A
+Target: ConnectorRegistry.sol Type: Data validation
+
+Description
+The addCustomRegistry function adds new custom registries to the
+customRegistries array and updates the isCustomRegistry mapping to mark
+the registry as added. However, the function lacks input validation and does
+not verify if the registry is already added. If the same registry is added
+multiple times, the array will contain duplicates, resulting in multiple indices
+allocated for the same custom registry in the customRegistries array.
+An issue arises when the updateCustomRegistry function is called with any of
+the allocated indices. The function sets isCustomRegistry to false and
+replaces the element in customRegistries with the new address. However, any
+duplicates remain unaffected, creating a situation where a registry address
+exists in the customRegistries array while isCustomRegistry returns false for
+this address.
+The updateCustomRegistry function does not validate if the input index is
+within the current bounds of the customRegistries array. If an invalid index is
+provided, the execution reverts with an OutOfBounds panic.
+Furthermore, both the newly added registry address and the updated
+registry address can be zero addresses. While the updateCustomRegistry logic
+suggests that zero addresses are expected, the isCustomRegistry function
+returns true for zero addresses, which is misleading and incorrect.
+
+Recommendation
+Add the following validations: - Check if isCustomRegistry is already set for the registry address in the addCustomRegistry function. - Verify that the input
+index is less than customRegistries.length in the updateCustomRegistry
+function. - Implement zero address validation.
+
+Partial solution 1.1
+The issue was partially fixed with the following comment.
+Added duplicate check in
+2477a23dd7d25af191b67e47beff085e78affba8.Further validation
+checks are done offchain in the deployment script as these
+are admin functions.
+================================================================================
+W16: Missing zero address validation
+
+Impact: Warning Likelihood: N/A
+Target: */.sol Type: Data validation
+
+Description
+Multiple contracts in the codebase lack zero address validation for critical
+address parameters in constructors and setter functions. The absence of
+zero address validation could result in permanently broken contract
+functionality if zero addresses are inadvertently set. The following instances
+lack zero address validation:
+In the SickleFactory contract:
+Listing 13. Excerpt from SickleFactory
+56 constructor(
+57 address admin_,
+58 address sickleRegistry_,
+59 address sickleImplementation_,
+60 address previousFactory_
+61 ) Admin(admin_) {
+62 registry = SickleRegistry(sickleRegistry_);
+63 implementation = sickleImplementation_;
+64 previousFactory = SickleFactory(previousFactory_);
+65 }
+• admin_ parameter
+• sickleRegistry parameter
+• sickleImplementation parameter
+In the ConnectorRegistry contract:
+Listing 14. Excerpt from ConnectorRegistry
+26 constructor(
+27 address admin_,
+28 address timelockAdmin_
+29 ) Admin(admin_) TimelockAdmin(timelockAdmin_) { }
+• admin_ parameter
+• timelockAdmin parameter
+In the SickleMultisig contract:
+Listing 15. Excerpt from SickleMultisig
+72 constructor(address initialSigner) {
+73 // Initialize with only a single signer and a threshold of 1. The signer
+74 // can add more signers and update the threshold using a proposal.
+75 _addSigner(initialSigner);
+76 _setThreshold(1);
+77 }
+Listing 16. Excerpt from SickleMultisig
+366 function _addSigner(address signer) internal changesSettings {
+367 if (isSigner(signer)) revert SignerAlreadyAdded();
+368 
+369 _signers.add(signer);
+370 
+371 emit SignerAdded(signer);
+372 }
+• initialSigner parameter
+• signer parameter
+In the NftSettingsRegistry contract:
+Listing 17. Excerpt from NftSettingsRegistry
+64 constructor(SickleFactory _factory, ConnectorRegistry _connectorRegistry) {
+65 factory = _factory;
+66 connectorRegistry = _connectorRegistry;
+67 }
+• _factory parameter
+• _connectorRegistry parameter
+In the Automation contract:
+Listing 18. Excerpt from Automation
+93 constructor(
+94 SickleRegistry registry_,
+95 address payable approvedAutomator_,
+96 address admin_
+97 ) Admin(admin_) NonDelegateMulticall(registry_) {
+98 _setApprovedAutomator(approvedAutomator_);
+99 }
+• registry_ parameter
+• approvedAutomator_ parameter
+• admin_ parameter
+In the PositionSettingsRegistry contract:
+Listing 19. Excerpt from PositionSettingsRegistry
+49 constructor(
+50 SickleFactory _factory,
+51 ConnectorRegistry connectorRegistry,
+52 address timelockAdmin
+53 ) TimelockAdmin(timelockAdmin) {
+54 factory = _factory;
+55 _connectorRegistry = connectorRegistry;
+56 emit ConnectionRegistrySet(address(connectorRegistry));
+57 }
+• _factory parameter
+• connectorRegistry parameter
+• timelockAdmin parameter
+In the FeesLib library:
+Listing 20. Excerpt from FeesLib
+23 constructor(SickleRegistry registry_, WETH weth_) {
+24 registry = registry_;
+25 weth = weth_;
+26 }
+• registry_ parameter
+• weth_ parameter
+In the SwapLib library:
+Listing 21. Excerpt from SwapLib
+18 constructor(
+19 ConnectorRegistry connectorRegistry_
+20 ) {
+21 connectorRegistry = connectorRegistry_;
+22 }
+• connectorRegistry_ parameter
+In the TransferLib library:
+Listing 22. Excerpt from TransferLib
+21 constructor(IFeesLib feesLib_, WETH weth_) {
+22 feesLib = feesLib_;
+23 weth = weth_;
+24 }
+• feesLib_ parameter
+• weth_ parameter
+
+Recommendation
+Add zero address validation checks for all critical address parameters. For
+example:
+require(address != address(0), "Zero address not allowed");
+Add these validation checks to: - constructors; - initialization functions; and -
+setter functions that update address parameters.
+
+Acknowledgment 1.1
+The issue was acknowledged with the following comment.
+This is left offchain to the deployment scripts.
+================================================================================
+I1: Duplicate code
+
+Impact: Info Likelihood: N/A
+Target: SickleRegistry.sol, FeesLib.sol Type: Code quality
+
+Description
+In the ConnectorRegistry contracts, the functions connectorOf and
+hasConnector have similar logic with the only difference in the return value.
+The algorithm of finding the connector address can be moved to a new
+internal function that returns the connector address if found, or zero address
+if not. The connectorOf and hasConnector functions can call this new function
+and return the correct value based on the output of this internal function.
+
+Recommendation
+Refactor the code to avoid code duplication.
+
+Fix 1.1
+The issue was fixed.
+================================================================================
+I2: Usage of magic constants
+
+Impact: Info Likelihood: N/A
+Target: SickleRegistry.sol, FeesLib.sol Type: Code quality
+
+Description
+
+In the SickleRegistry contract, the setFees function verifies if the provided
+fee does not exceed the maximum value of 5%:
+Listing 23. Excerpt from SickleRegistry
+126 if (feesArray[i] <= 500) {
+127 // maximum fee of 5%
+128 feeRegistry[feeHashes[i]] = feesArray[i];
+129 } else {
+Also, the FeesLib contract uses inline 10_000:
+Listing 24. Excerpt from FeesLib
+59 uint256 amountToCharge = feeBasis * fee / 10_000;
+Best practices suggest that magic constants (like 500) are discouraged and
+named constants should be used instead.
+Recommendation
+
+Add a new MAX_FEE constant and use it instead of plain 500.
+
+Fix 1.1
+The issue was fixed
+================================================================================
+I3: Unconsolidated storage variable definitions
+
+Impact: Info Likelihood: N/A
+Target: SickleMultisig.sol Type: Code quality
+
+Description
+
+The SickleMultisig contract defines three storage variables on lines 66-68
+and one storage variable, _signers, on line 253. The location of the latter is
+unobvious and may lead to incorrect assumptions about the storage layout
+of the contract.
+
+Recommendation
+Place the _signers variable definition together with other storage variables at
+the top of the contract.
+
+Fix 1.1
+The issue was fixed.
+================================================================================
+I4: Redundant storage variable
+
+Impact: Info Likelihood: N/A
+Target: Automation.sol Type: Code quality
+
+Description
+In the Automation contract, the approvedAutomators array is used to store a list
+of all approved automators. Additionally, the approvedAutomatorsLength
+variable stores the length of this array. This variable is incremented in the
+_setApprovedAutomator function and decremented in the
+revokeApprovedAutomator function. Other than that, approvedAutomatorsLength
+is never used. Since the length of the array can be obtained by calling
+approvedAutomators.length, the approvedAutomatorsLength variable can be
+considered redundant and can be removed to save gas.
+Also in the setApprovedAutomator function there is a missing check, if the
+approvedAutomator is already in the approvedAutomators array.
+
+Recommendation
+Remove the approvedAutomatorsLength variable and add a check in the
+_setApprovedAutomator function to prevent adding the same automator twice.
+
+Fix 1.1
+The issue was fixed.
+================================================================================
+I5: Mapping isCustomRegistry is redundant
+
+Impact: Info Likelihood: N/A
+Target: ConnectorRegistry.sol Type: Code quality
+
+Description
+The isCustomRegistry mapping in the ConnectorRegistry.sol contract stores
+boolean values that are never read or utilized in the contract’s logic. The
+mapping is updated in two scenarios:
+1. Set to true when a new CustomRegistry is added via addCustomRegistry or
+updateCustomRegistry functions; and
+2. Set to false when a CustomRegistry is updated via updateCustomRegistry
+function.
+This mapping is redundant because:
+• The active CustomRegistry data is already stored in the customRegistries
+mapping; and
+• Historical records of removed registries are tracked through the
+CustomRegistryRemoved event.
+
+Recommendation
+Remove the isCustomRegistry mapping from the ConnectorRegistry.sol
+contract.
+
+Fix 1.1
+The issue was fixed. The isCustomRegistry mapping was removed from the
+ConnectorRegistry.sol contract. The new created isCustomRegistry function
+returns a boolean value indicating whether a registry exists in the
+customRegistries mapping
+=================================================================================
+I6: Inconsistent function naming convention
+
+Impact: Info Likelihood: N/A
+Target: NftSettingsRegistry.sol,
+PositionSettingsRegistry.sol
+Type: Code quality
+
+Description
+The codebase uses a mix of snake_case and camelCase for function names,
+which violates Solidity’s style guide. Solidity’s convention recommends using
+camelCase for function names.
+The NftSettingsRegistry.sol contract contains the following functions using
+snake_case naming convention:
+• _get_sickle_by_owner;
+• _set_nft_settings;
+• _unset_nft_settings;
+• _check_rebalance_config; and
+• _check_tick_width.
+The PositionSettingsRegistry.sol contract contains the following functions
+using snake_case naming convention:
+• _check_reward_config;
+• _get_sickle_by_owner; and
+• _get_pool_price.
+
+Recommendation
+Rename all functions to follow the camelCase naming convention according to
+the Solidity style guide. For example:
+• _get_sickle_by_owner should be _getSickleByOwner;
+• _set_nft_settings should be _setNftSettings; and
+• _check_reward_config should be _checkRewardConfig.
+
+Fix 1.1
+The issue was fixed. The functions were renamed to follow the camelCase
+naming convention
+================================================================================
+I7: Typographical error in function comment
+
+Impact: Info Likelihood: N/A
+Target: NftSettingsRegistry.sol Type: Code quality
+
+Description
+The NftSettingsRegistry.sol contract contains a typographical error in the
+comment of the _check_rebalance_config function. The comment:
+// Check configuratgion parameters for errors
+contains a misspelling of the word "configuration".
+
+Recommendation
+Correct the comment to:
+// Check configuration parameters for errors
+
+Fix 1.1
+The issue was fixed. The comment was corrected to "Check configuration
+parameters for errors".
+===============================================================================
+I8: Misleading error name
+
+Impact: Info Likelihood: N/A
+Target: SickleMultisig.sol Type: Code quality
+
+Description
+The TransactionNotReadyToExecute error in the SickleMultisig.sol contract is
+used when a transaction fails due to insufficient signature count. The error
+name is misleading because:
+• It does not explicitly indicate that the failure is due to insufficient
+signatures; and
+• The term "not ready" is ambiguous and could suggest other potential
+issues.
+Listing 25. Excerpt from SickleMultisig
+332 if (transaction.signatures < threshold) {
+333 revert TransactionNotReadyToExecute();
+334 }
+
+Recommendation
+Rename the error to clearly indicate the specific reason for the transaction
+failure.
+
+Fix 1.1
+The issue was fixed. The error name was changed to InsufficientSignatures
+to clearly indicate the specific reason for the transaction failure
+================================================================================
+I9: Unused errors
+
+Impact: Info Likelihood: N/A
+Target: NftSettingsRegistry.sol Type: Code quality
+
+Description
+The contract has unused errors. The following code excerpts enumerate all of
+them.
+Listing 26. Excerpt from NftSettingsRegistry
+35 error CompoundOrHarvestNotSet();
+36 error CompoundAndHarvestBothSet();
+
+Recommendation
+Remove the unused errors or utilize them.
+
+Fix 1.1
+The issue was fixed. The unused errors were removed from the contract.
+=================================================================================
+I10: Redundant function
+
+Impact: Info Likelihood: N/A
+Target: Sickle.sol Type: Code quality
+
+Description
+The _Sickle_initialize function in the Sickle.sol contract serves only as a
+pass-through to SickleStorage._SickleStorage_initialize without adding any
+additional functionality:
+Listing 27. Excerpt from Sickle
+34 function _Sickle_initialize(
+35 address sickleOwner_,
+36 address approved_
+37 ) internal {
+38 SickleStorage._SickleStorage_initialize(sickleOwner_, approved_);
+39 }
+The function is called in the constructor and initialize function of the
+Sickle.sol contract:
+Listing 28. Excerpt from Sickle
+21 _Sickle_initialize(address(0), address(0));
+
+Recommendation
+Remove the redundant _Sickle_initialize function and call
+_SickleStorage_initialize directly in both the constructor and initialize
+function.
+
+Fix 1.1
+The issue was fixed. The redundant _Sickle_initialize function was removed and _SickleStorage_initialize was called directly from the initialize
+function. The call in the constructor was removed.
+================================================================================
+I11: Missing duplicate registry validation
+
+Impact: Info Likelihood: N/A
+Target: ConnectorRegistry.sol Type: Data validation
+
+Description
+The ConnectorRegistry contract lacks validation checks for duplicate
+registries in the addCustomRegistry and updateCustomRegistry functions. The
+same registry address can be added multiple times to the customRegistries
+array, leading to redundant entries and increased gas costs for array
+operations.
+
+Recommendation
+Implement validation checks in both functions to prevent duplicate registry
+addresses.
+
+Partial solution 1.1
+The issue was partially fixed. The duplicate registry validation was added to
+the addCustomRegistry function. The updateCustomRegistry function was not
+updated.
+=================================================================================
+I12: Errors in documentation
+
+Impact: Info Likelihood: N/A
+Target: SickleStorage.sol Type: N/A
+
+Description
+Misleading documentation for the SickleStorage.onlyOwner modifier. The
+statement "if the admin was not set yet, the modifier will not restrict the call"
+is not true.
+Listing 29. Excerpt from SickleStorage
+37 /// @dev Restricts a function call to the owner, however if the admin was
+38 /// not set yet,
+39 /// the modifier will not restrict the call, this allows the SickleFactory
+40 /// to perform
+41 /// some calls on the user's behalf before passing the admin rights to them
+42 modifier onlyOwner() {
+43 if (msg.sender != owner) revert NotOwnerError();
+44 _;
+45 }
+
+Recommendation
+Fix the documentation or implementation.
+
+Fix 1.1
+The issue was fixed.
+================================================================================

@@ -1,0 +1,722 @@
+Repository URL: https://github.com/prime-protocol/prime-protocol
+Full commit hash: 4264302
+========================================================================
+Findings Summary:
+==================
+M1: USP can return different exchange rate
+Medium severity issue
+Impact: High Likelihood: Low
+Target: PriceOracle.sol Type: Logic error
+Listing 1. Excerpt from /contracts/master/oracle//PrimeOracle.sol#L82-
+L93[PrimeOracle.getBorrowAssetExchangeRate]
+82 if (loanMarketUnderlying == uspAddress) {
+83 return _getAssetPrice(block.chainid, loanMarketUnderlying);
+84 }
+85 
+86 IPrimeOracleGetter primaryFeed =
+  primaryFeeds[loanMarketUnderlyingChainId][loanMarketUnderlying];
+87 if (address(primaryFeed) == address(0)) revert
+  AddressExpected();
+88 (ratio, decimals) =
+  primaryFeed.getAssetRatio(loanMarketOverlying, loanMarketUnderlying,
+  loanMarketUnderlyingChainId);
+89 if (ratio == 0) {
+90 IPrimeOracleGetter secondaryFeed =
+  primaryFeeds[loanMarketUnderlyingChainId][loanMarketUnderlying];
+91 if(address(secondaryFeed) == address(0)) revert
+  AddressExpected();
+92 (ratio, decimals) =
+  secondaryFeed.getAssetRatio(loanMarketOverlying, loanMarketUnderlying,
+  loanMarketUnderlyingChainId);
+93 }
+Description
+When uspAddress is not set after deployment, then the variable is equal to
+zero-address and thus getBorrowAssetExchangeRate, can return different
+values than is expected because of USP-specific branching.
+The getUnderlyingPriceBorrow is safe from this because it is checking for
+Blockchain audits | Blockchain security assessment
+Blockchain audits | Blockchain security assessment
+decimals (on zero-address).
+Exploit scenario
+Admin forgets to set USP address. As a result, getBorrowAssetExchangeRate
+returns a different value than is expected (also depending on the arguments
+- zero-address/USP as an underlying).
+For example, the user calls getBorrowAssetExchangeRate(someAsset, 1,
+ZERO_ADDRESS):
+• zero-address belongs to a native token,
+• so the call returns price for the native token,
+• then uspAddress is set to USP address,
+• and the next same call returns the asset ratio between someAsset and the
+native token.
+Recommendation
+Ensure that uspAddress is not set to zero-address. For example initialize it in
+the constructor with address(1).
+Solution (Revision 1.1)
+The function getUnderlyingPriceBorrow is now reverting if uspAddress is set to
+zero-address.
+===========================================================================
+M2: Duplicate routes can cause loss of funds
+Medium severity issue
+Impact: High Likelihood: Low
+Target: MiddleLayer.sol Type: Logic error
+Listing 2. Excerpt from
+/contracts/middleLayer/MiddleLayerAdmin.sol#L70-
+L74[MiddleLayerAdmin.addRoute]
+70 function addRoute(IRoute _newRoute) external onlyAdmin() {
+71 if(address(_newRoute) == address(0)) revert AddressExpected();
+72 routes.push(_newRoute);
+73 authRoutes[address(_newRoute)] = true;
+74 }
+Listing 3. Excerpt from /contracts/middleLayer/MiddleLayer.sol#L69-
+L69[MiddleLayer.msend]
+69 uint256 hash = uint256(keccak256(abi.encodePacked(_params,
+  block.timestamp, _dstChainId)));
+Description
+It is possible to add multiple same routes via the addRoute function (see
+Listing 2). This behavior can cause there will be a bigger chance that the
+duplicated route will be chosen by the route picker (see Listing 3).
+This issue becomes more several when the duplicated route is removed. The
+route is disabled from the mapping of the authorized routes,
+authRoutes[address(_fallbackAddressToRemove)] = false;
+Blockchain audits | Blockchain security assessment
+Blockchain audits | Blockchain security assessment
+however, the route is still in the route list (because of duplication). When is
+the msend function called, there is a chance (depending on the number of
+routes and duplications) that the disabled route will be chosen. This can
+cause a loss of funds.
+Exploit scenario
+Admin accidentally adds the same route again. Later he/she decides to
+remove the route and didn’t notice the route was added twice. When the
+msend function is called, the disabled route is chosen and the passed funds
+are lost.
+Recommendation
+Prevent adding duplicated routes in the addRoute function.
+Solution (Revision 1.1)
+The addRoute function is modified to check if the route is already added. If so,
+the function will revert.
+if (authRoutes[address(_newRoute)]) revert RouteExists();
+===========================================================================
+M3: Admin role can be renounced
+Medium severity issue
+Impact: High Likelihood: Low
+Target: **/* Type: Data validation
+Listing 4. Excerpt from /contracts/ecc/ECC.sol#L81-L85[ECC.changeAdmin]
+81 function changeAdmin(
+82 address newAdmin
+83 ) external onlyAdmin() {
+84 admin = newAdmin;
+85 }
+Description
+The changeAdmin function lacks zero-address validation (see Listing 4). Due to
+that, the Admin role can be renounced by the current Admin.
+Exploit scenario
+The Admin accidentally calls changeAdmin with a zero-address. Then nobody
+will ever be able to use elevated privileges.
+Recommendation
+Add a zero-address check to prevent this if it is not intended. Otherwise,
+ignore this issue.
+Solution (Revision 1.1)
+The new contract AdminControl.sol has been added to the repository. It is a
+base contract that can be used to implement the Admin role. For changing
+the admin role, two-step process is used. First, the new admin is proposed.
+Blockchain audits | Blockchain security assessment
+Blockchain audits | Blockchain security assessment
+Then, the proposed admin has to accept the role. This system prevents the
+accidental renouncement of the Admin role.
+===========================================================================
+M4: Two-phase Admin role transfer
+Medium severity issue
+Impact: High Likelihood: Low
+Target: **/* Type: Data validation
+Description
+Multiple contracts in the codebase use the owner pattern for access control
+and also allow ownership transfer.
+However, neither of the transfer functions has a robust verification
+mechanism for the new proposed owner. If a wrong owner address is passed
+to them, neither can recover from the error.
+Thus passing a wrong address can lead to irrecoverable mistakes.
+Exploit scenario
+The current owner Alice wants to transfer the ownership to Bob. Alice calls
+the changeAdmin function but supplies the wrong address by mistake. As a
+result, the ownership will be passed to the wrong address.
+Recommendation
+One of the common and safer approaches to ownership transfer is to use a
+two-step transfer process.
+Suppose Alice wants to transfer the ownership to Bob. The two-step process
+would have the following steps: Alice proposes a new owner, namely Bob. This
+proposal is saved to a variable candidate. Bob, the candidate, calls the
+acceptOwnership function. The function verifies that the caller is the new
+proposed candidate, and if the verification passes, the function sets the
+Blockchain audits | Blockchain security assessment
+Blockchain audits | Blockchain security assessment
+caller as the new owner. If Alice proposes a wrong candidate, she can change
+it. However, it can happen, though with a very low probability that the wrong
+candidate is malicious (most often it would be a dead address). An
+authentication mechanism can be employed to prevent the malicious
+candidate from accepting the ownership.
+Solution (Revision 1.1)
+For changing the admin role, the two-step process is used. The logic is
+implemented in the new contract AdminControl.sol
+===========================================================================
+M5: The setMidLayer function has insufficient
+validation
+Medium severity issue
+Impact: High Likelihood: Low
+Target: ECC.sol Type: Data validation
+Description
+The setMidLayer function allows passing an arbitrary address.
+Exploit scenario
+By accident, an incorrect newMiddleLayer is passed to the function. Instead of
+reverting, the call succeeds.
+Recommendation
+Add more stringent data validation for newMiddleLayer. At the very least this
+would include a zero-address check. Ideally, we recommend defining a getter
+such as contractId() that would return a hash of an identifier unique to the
+(project, contract) tuple[1]
+. This will ensure the call reverts for most incorrectly
+passed values (see L1: Lack of project identifier for address validation for
+more information).
+Solution (Revision 1.1)
+The setMidLayer function now checks the unique ID identifier of
+newMiddleLayer by the added isMiddleLayer modifier.
+Blockchain audits | Blockchain security assessment
+===========================================================================
+M6: CRM missing validations
+Medium severity issue
+Impact: High Likelihood: Low
+Target: CRMAdmin.sol Type: Data validation
+Description
+CRMStorage.sol values ratioCeiling and ratioFloor are validated in the CRM.sol
+constructor but not in CRMAdmin.sol setters.
+Listing 5. Excerpt from /contracts/master/crm//CRM.sol#L15-
+L18[CRMAdmin.constructor]
+15 if (
+16 ratioCeilingParam > 103e16 /* 103% */ ||
+17 ratioFloorParam < 97e16 /* 97% */
+18 ) revert ParamOutOfBounds();
+Listing 6. Excerpt from /contracts/master/crm//CRMAdmin.sol#L8-
+L13[CRMAdmin.setRatioCeiling]
+8 function setRatioCeiling(
+9 uint256 ratio
+10 ) external onlyAdmin() returns (uint256) {
+11 ratioCeiling = ratio;
+12 return ratioCeiling;
+13 }
+Listing 7. Excerpt from /contracts/master/crm//CRMAdmin.sol#L15-
+L20[CRMAdmin.setRatioFloor]
+15 function setRatioFloor(
+16 uint256 ratio
+17 ) external onlyAdmin() returns (uint256) {
+Blockchain audits | Blockchain security assessment
+Blockchain audits | Blockchain security assessment
+18 ratioFloor = ratio;
+19 return ratioFloor;
+20 }
+Exploit scenario
+Admin changes these values by intent (or by mistake), which leads to loan
+market premium manipulations and misbehaviors.
+Recommendation
+Add ratioCeiling and ratioFloor validations into setters in CRMAdmin.sol.
+Solution (Revision 1.1)
+Two conditions have been added to setRatioCeiling and setRatioFloor
+functions in CRMAdmin.sol to validate the values.
+===========================================================================
+M7: IRM setters are not performing any kind of
+data validation
+Medium severity issue
+Impact: High Likelihood: Low
+Target: IRM.sol Type: Data validation
+Description
+The values for the IRM that are passed in the constructor are validated for
+non-zero values, however, the setters allow to set the values to zero.
+Exploit scenario
+Admin changes these values by intent (or by mistake) and critically affects
+the protocol.
+Recommendation
+Implement data validation for setters similarly as it is done in the constructor.
+Solution (Revision 1.1)
+The IRM.sol contract inherits the logic from the new contract IRMAdmin.sol
+that has been added to the repository. The new contract contains the logic
+for the setters with zero address checks.
+===========================================================================
+M8: Unsafe transfers
+Medium severity issue
+Impact: High Likelihood: Low
+Target: Treasury.sol Type: Data validation
+Listing 8. Excerpt from /contracts/satellite/treasury/Treasury.sol#L38-
+L38[Treasury.mintLoanAsset]
+38 if (tradeAsset != address(0) &&
+  !_tradeAsset.transferFrom(msg.sender, address(this), tradeAmount))
+  revert TransferFailed(msg.sender, address(this));
+Listing 9. Excerpt from /contracts/satellite/treasury/Treasury.sol#L75-
+L75[Treasury.burnLoanAsset]
+75 else if (!_tradeAsset.transfer(msg.sender, tradeAmount)) revert
+  TransferFailed(msg.sender, address(this));
+Description
+The Treasury.sol inherits from SafeTransfers contract but does not use safe
+transfer methods on ERC-20 assets.
+Exploit scenario
+A non-standard (or malicious) token is used in the contract. It causes
+successful transfers without transferring the amount (or any other
+unexpected behavior).
+Recommendation
+Use safe transfer functions from the SafeTransfers contract or use
+OpenZeppelin SafeERC20 extension.
+Blockchain audits | Blockchain security assessment
+The logic has been moved to the contract TreasuryBase.sol with the
+SafeTransfers inheritance, and the _doTransferIn and _doTransferOut
+functions are used.
+===========================================================================
+M9: Safe transfers are not checking for zero
+amounts
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: SafeTransfers.sol Type: Data validation
+Description
+The doTransferOut function does not check for zero amounts. This can lead to
+a transfer of zero tokens to a recipient address and not revert the
+transaction.
+Exploit scenario
+Bob performs a liquidation and sends some amount of tokens into
+MasterState. However, his reward is calculated as zero, and he loses his
+deposited tokens.
+Recommendation
+Add a requirement for a non-zero amount to the _doTransferOut function.
+Solution (Revision 1.1)
+The zero amount check with a revert has been added to the functions.
+===========================================================================
+M10: Duplicated balance values
+Medium severity issue
+Impact: Medium Likelihood: Low
+Target: Treasury.sol Type: Data validation
+Listing 10. Excerpt from
+/contracts/satellite/treasury/Treasury.sol#L37-
+L37[Treasury.mintLoanAsset]
+37 assetReserves[tradeAsset] += tradeAmount;
+Listing 11. Excerpt from
+/contracts/satellite/treasury/Treasury.sol#L71-
+L71[Treasury.burnLoanAsset]
+71 assetReserves[tradeAsset] = tradeAssetReserves - tradeAmount;
+Description
+Treasury.sol saves reserve assets' balances into the assetReserves mapping.
+This can cause inconsistencies between assetReserves and the real token
+balances in the contract in combination with unsafe transfers.
+Exploit scenario
+A malicious (non-standard) token performs a successful unsafe transfer
+without transferring tokens, but the balance in the assetReserves gets
+updated. Then withdraw and burnLoanAsset functions revert until these values
+match.
+Blockchain audits | Blockchain security assessment
+Listing 12. Excerpt from
+/contracts/satellite/treasury/TreasuryAdmin.sol#L22-
+L25[TreasuryAdmin.withdraw]
+22 if (assetAddress == address(0)) _assetReserves = address(
+  this).balance;
+23 else _assetReserves = ERC20(assetAddress).balanceOf(address(
+  this));
+24 
+25 if (assetReserves[assetAddress] > _assetReserves) revert
+  UnexpectedDelta();
+Listing 13. Excerpt from
+/contracts/satellite/treasury/Treasury.sol#L65-
+L68[TreasuryAdmin.withdraw]
+65 if (tradeAsset == address(0)) tradeAssetReserves = address(
+  this).balance;
+66 else tradeAssetReserves = _tradeAsset.balanceOf(address(this));
+67 
+68 if (assetReserves[tradeAsset] > tradeAssetReserves) revert
+  UnexpectedDelta();
+Recommendation
+Use SafeTransfers to avoid balance miscalculations.
+Solution (Revision 1.1)
+The functions from SafeTransfers are now used to transfer tokens.
+===========================================================================
+L1: Lack of project identifier for address
+validation
+Low severity issue
+Impact: Low Likelihood: Low
+Target: **/* Type: Data validation
+Listing 14. Project Identifier
+  bytes32 public constant CONTRACT_TYPE = keccak256("Prime - Middle
+Layer");
+Listing 15. Require statement for Data validation
+  require(
+  MiddleLayer(address_).CONTRACT_TYPE() == keccak256("Prime - Middle
+Layer"),
+  "Not a Middle Layer"
+  );
+Description
+Currently, the contracts in constructors and setter functions are at most
+only checked against the zero address.
+This approach can filter out the most basic mistakes, but it is not sufficient
+to ensure more deep address validation. Further validation can be done by
+using contract/project identifiers.
+Such an identifier can be a constant string or a hash of a string (see Listing
+14). Upon construction of a new contract that requires a Middle Layer
+address a check of the identifier would be done (see Listing 15). The same
+check can also be done anywhere else to ensure the correctness of the
+passed address.
+Exploit scenario
+A contract deployer passes a wrong address to a constructor of one of the
+Prime contracts. The address is not the zero address, but it is not a valid
+address of a Prime contract either. As a result, a contract is deployed with
+the wrong parameters.
+Recommendation
+It is recommended to use more stringent input data validation using the
+project-wide identifier - not only in the upgrade function but also in the
+constructors.
+Such an approach might be not possible to implement when the contracts are
+circularly dependent on each other. Yet, this approach should be
+implemented where possible.
+Solution (Revision 1.1)
+The issue has been fixed only for the MiddleLayer. We recommend applying
+unique ID validations also for other contracts. E.g., MasterState and LoanAgent
+in the MiddleLayerAdmin.
+Client’s comment: "Our deployment suite handles setting these addresses.
+Our solidity contracts will always be deployed and upgraded using our
+typescript infrastructure, and therefore this issue will not occur through our
+standardized deployment/operations procedure."
+===========================================================================
+L2: The liquidateCalculateSeizeTokens is not
+checking for a valid PToken address
+Low severity issue
+Impact: Low Likelihood: Low
+Target: MasterState.sol Type: Logic error
+Description
+Liquidations are not checking for a valid PToken address. This can lead to a
+revert after reaching Middle Layer since then will be called the seize function
+on the PToken address. If the seize function exists on the PToken address, it
+will be called, otherwise it will revert.
+This is an uncontrolled call to an arbitrary address. Fortunately, the only way
+how to exploit that leads to loss of funds for the attacker. However, it is still a
+vulnerability.
+Exploit scenario
+Bob creates own PToken with an arbitrary seize function. Bob then calls the
+liquidateBorrow function with his PToken address as the parameter. The seize
+function will be called, and Bob can execute his code. Transaction will not
+revert and it will cause a loss of Bob’s funds since the PToken will not
+transfer.
+Recommendation
+Add a check for a valid PToken address in the liquidateCalculateSeizeTokens
+function.
+Solution (Revision 1.2)
+Acknowledged. Client’s response:
+" The auditors agree that this issue does not cause the protocol to lose
+funds, and can only result in the lost funds of a user attempting to pass a
+fraudulent PToken address. We do not think that an attacker losing their own
+funds is an issue for the protocol. "
+===========================================================================
+W1: Treasury allows to receive native tokens
+without minting
+Impact: Warning Likelihood: N/A
+Target: Treasury.sol Type: Logic error
+Description
+The contract has an empty payable receive function. Due to this, a native
+token can be deposited without minting. This can be a problem in certain
+scenarios. For example, the token could not be withdrawn if there will be
+nothing to burn against.
+Recommendation
+Disable this feature if it is not intended for a production environment.
+Solution (Revision 1.1)
+The payable function receive has been removed.
+===========================================================================
+W2: Hardcoded decimals for native tokens
+Impact: Warning Likelihood: N/A
+Target: Treasury.sol Type: Arithmetics
+Description
+Decimals for native tokens are hardcoded in the Treasury contract. This could
+be potentially dangerous if any of the supported chains would differ from the
+hardcoded value.
+Recommendation
+Be aware of this issue if you will be adding some unconventional EVM chain to
+the protocol, or parametrize it.
+Solution (Revision 1.1)
+The native decimals are now set in the constructor of the TreasuryStorage
+contract.
+===========================================================================
+W3: Users can deposit but can not withdraw in a
+specific case
+Impact: Warning Likelihood: N/A
+Target: AxelarRoute.sol Type: Uninitialized
+values
+Description
+The AxelarRoute contract needs to set the executor to call the execute
+function (onlyAX modifier). The executor should be an Axelar Gateway
+address.
+However, since the deposit process is not using the execute function on a
+source chain, it allows a successful deposit. However, users can not further
+withdraw their tokens if the executor is not set correctly.
+This issue will not apply if the contract is on the same chain as the Master
+State.
+Recommendation
+Do not allow only partial functionality (if the user is not well informed about
+that). The AxelarRoute contract should not allow a deposit if the executor is
+not set correctly.
+Solution (Revision 1.1)
+The zero address check for the variable executor has been added to the
+constructor.
+===========================================================================
+W4: Inconsistent Master State values can break
+the calculations
+Impact: Warning Likelihood: N/A
+Target: MasterState.sol Type: Inconsistent
+state
+Description
+This issue presents an essential struggle in cross-chain projects, how to
+share critical values between different chains. The MasterState contract has
+supportMarket function that assigns values for a PToken instance, but these
+values can be set inconsistently against the real values that the PToken
+contract has on its chain. As a result, the calculations would be incorrect.
+Recommendation
+Values can be assigned using message-passing architecture or with a specific
+off-chain solution to ensure consistency (like deployment scripts).
+Solution (Revision 1.1)
+The client acknowledged the issue with the following comment: "Using our
+deployment script, MasterState values are always verified and cannot be
+inconsistent."
+===========================================================================
+W5: Missing initializer modifier on the
+constructor
+Impact: Warning Likelihood: N/A
+Target: MasterState.sol Type: Data validation
+Description
+Since the protocol is using a well-known upgradeability implementation
+(UUPSUpgradeable) the missing initializer can not affect the proxy contract.
+However, an attacker still can claim himself as the admin of the
+implementation contract and adjust the contract for his/her needs.
+If the contract gets accidentally whitelisted or any other black swan event
+happens, the attacker can use the implementation contract as the potential
+attack vector for the protocol.
+Recommendation
+Add the initializer modifier on the constructor.
+Solution (Revision 1.1)
+The initializer modifier has been added to the constructor.
+===========================================================================
+W6: The setBorrowRate function does not emit
+events on different branching
+Impact: Warning Likelihood: N/A
+Target: IRM.sol Type: Events
+Description
+The setBorrowRate function emits the SetBorrowRate event only when ratio >
+upperTargetRatio, otherwise it does not emit any event, but the
+borrowInterestRatePerBlock variable is updated.
+Recommendation
+Emit events on every change of the borrowInterestRatePerBlock variable.
+Solution (Revision 1.1)
+The event is now correctly emitted at the end of the function.
+===========================================================================
+W7: Usage of solc optimizer
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Compiler
+configuration
+Description
+The project uses solc optimizer. Enabling solc optimizer may lead to
+unexpected bugs.
+The Solidity compiler was audited in November 2018, and the audit concluded
+that the optimizer may not be safe.
+Vulnerability scenario
+A few months after deployment, a vulnerability is discovered in the optimizer.
+As a result, it is possible to attack the protocol.
+Recommendation
+Until the solc optimizer undergoes more stringent security analysis, opt-out
+using it. This will ensure the protocol is resilient to any existing bugs in the
+optimizer.
+Solution (Revision 1.2)
+Acknowledged.
+===========================================================================
+W8: Lockfile overwriting
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Dependency
+management
+Description
+The npm i command overwrites the lockfile and that can cause undefined
+behavior.
+Exploit scenario
+A developer will go step by step with README in the repository to deploy its
+contracts. So, he/she will use npm i instead of npm ci (clean install) which will
+overwrite the lockfile. Contracts are deployed on an untested version and due
+to that contracts have different behavior than it’s intended.
+Recommendation
+Use npm ci instead of npm i to install dependencies.
+Solution (Revision 1.1)
+README has been updated.
+===========================================================================
+I1: Inconsistent naming convention
+Impact: Info Likelihood: N/A
+Target: PTokenAdmin.sol Type: Code maturity
+Description
+The isdeprecated is not following the camel case naming convention.
+Recommendation
+Rename the function to isDeprecated.
+Solution (Revision 1.2)
+Acknowledged.
+===========================================================================
+I2: Misleading error for zero-address
+Impact: Info Likelihood: N/A
+Target: **/* Type: Custom errors
+Description
+The codebase uses the AddressExpected() error in cases where the zero address is not allowed. This error is misleading since zero-address is still an
+address. Therefore, it does not reflect precisely what is happening.
+Recommendation
+The error should be renamed to something more clear like
+ZeroAddressNotAllowed().
+Solution (Revision 1.2)
+Acknowledged.
+===========================================================================
+I3: Commented out code
+Impact: Info Likelihood: N/A
+Target: **/* Type: Code maturity
+Description
+The codebase contains commented-out code. This is a code smell and should
+be removed.
+Recommendation
+Remove all unnecessary code before use in a production environment.
+Solution (Revision 1.2)
+Acknowledged.
+===========================================================================
+I4: Inconsistent usage of
+(pre/post)incrementation
+Impact: Info Likelihood: N/A
+Target: **/* Type: Gas optimization
+Description
+The contract uses (pre/post)incrementation inconsistently in its for-loops.
+Pre-incrementation is the preferred way since it is cheaper for execution.
+Recommendation
+Replace post-incrementation with pre-incrementation in for-loops.
+Solution (Revision 1.2)
+Loops have been updated to pre-incrementation.
+===========================================================================
+I5: Unnecessary load
+Impact: Info Likelihood: N/A
+Target: ECC.sol Type: Gas optimization
+Listing 16. Excerpt from /contracts/ecc/ECC.sol#L261-
+L267[ECC.resendMessage]
+261 if (!found) {
+262 bytes32 data;
+263 assembly {
+264 data := sload(ptr)
+265 }
+266 revert("rsm not found");
+267 }
+Description
+In the Listing 16 is unnecessary sload to the local variable since in the next
+line it will revert.
+Recommendation
+Remove the unnecessary code.
+Solution (Revision 1.2)
+Unused code has been removed.
+===========================================================================
+I6: LoanAgent code duplications
+Impact: Info Likelihood: N/A
+Target: LoanAgent.sol Type: Best practices
+Description
+The LoanAgent contract contains duplicated code in repayBorrow and
+repayBorrwBehalf functions.
+Listing 17. Excerpt from
+/contracts/satellite/loanAgent//LoanAgent.sol#L61-
+L77[LoanAgent._sendRepay]
+61 function repayBorrow(
+62 address route,
+63 address loanMarketAsset,
+64 uint256 repayAmount
+65 ) external payable virtual override returns (uint256) {
+66 if (repayAmount == 0) revert ExpectedRepayAmount();
+67 if (loanMarketAsset == address(0)) revert AddressExpected();
+68 if (isFrozen[loanMarketAsset]) revert
+  MarketIsFrozen(loanMarketAsset);
+69 
+70 return _sendRepay(
+71 msg.sender,
+72 msg.sender,
+73 route,
+74 loanMarketAsset,
+75 repayAmount
+76 );
+77 }
+Listing 18. Excerpt from
+/contracts/satellite/loanAgent//LoanAgent.sol#L85-
+L102[LoanAgent.repayBorrowBehalf]
+85 function repayBorrowBehalf(
+86 address borrower,
+87 address route,
+88 address loanMarketAsset,
+89 uint256 repayAmount
+90 ) external payable virtual override returns (uint256) {
+91 if (repayAmount == 0) revert ExpectedRepayAmount();
+92 if (loanMarketAsset == address(0)) revert AddressExpected();
+93 if (isFrozen[loanMarketAsset]) revert
+  MarketIsFrozen(loanMarketAsset);
+94 
+95 return _sendRepay(
+96 msg.sender,
+97 borrower, 
+98 route,
+99 loanMarketAsset,
+100 repayAmount
+101 );
+102 }
+Recommendation
+Call the repayBorrowBehalf function from repayBorrow with msg.sender as a
+borrower.
+function repayBorrow(
+  address route,
+  address loanMarketAsset,
+  uint256 repayAmount
+) external payable virtual override returns (uint256) {
+  repayBorrowBehalf(msg.sender, route, loanMarketAsset, repayAmount)
+}
+Solution (Revision 1.2)
+Code duplication has been resolved according to our recommendation.
+===========================================================================
+I7: ECC variables should be constants
+Impact: Info Likelihood: N/A
+Target: ECC.sol Type: Best practices
+Description
+State variables maxSize, metadataSize, and usableSize are assigned only in
+declarations. Should be contstants.
+Listing 19. Excerpt from /contracts/ecc//ECC.sol#L64-L66[ECC.]
+64 uint256 internal maxSize = 8;
+65 uint256 internal metadataSize = 2;
+66 uint256 internal usableSize = 6;
+Recommendation
+Refactor these variables to constants and adjust the assembly code that
+uses it accordingly.
+internal constant MAX_SIZE = 8;
+uint256 internal constant METADATA_SIZE = 2;
+uint256 internal constant USABLE_SIZE = 6;
+Solution (Revision 1.2)
+State variables have been transformed into constants, and the rest of the
+code has been updated accordingly.
+===========================================================================
+I8: Abstract contracts naming
+Impact: Info Likelihood: N/A
+Target: interfaces Type: Best practices
+Description
+interfaces folders sometimes contain abstract contracts with the I prefix
+names. Even these fake-interface abstract contracts extend other abstract
+contracts with state variables. This is very confusing and generally bad
+practice.
+E.g. the ILoanAgent inherits from LoanAgentStorage, which contains state
+variables.
+Listing 20. Excerpt from
+/contracts/satellite/loanAgent/interfaces/ILoanAgent.sol#L7-
+L7[ILoanAgent.]
+7 abstract contract ILoanAgent is LoanAgentStorage {
+Recommendation
+Do not use I prefix for abstract contracts.
+Solution (Revision 1.2)
+Acknowledged.
+===========================================================================
+I9: Documentation
+Impact: Info Likelihood: N/A
+Target: **/* Type: Best practices
+Description
+NatSpec documentation is missing in the majority of contracts (usually
+present only in interfaces). Some contracts with NatSpec documentation are
+missing param descriptions. E.g., LoanAgent.sol is missing route param
+description in all functions.
+Recommendation
+Cover all contracts and functions with NatSpec documentation. Missing or
+sporadic code documentation does not look professional in open-source
+projects.
+Solution (Revision 1.2)

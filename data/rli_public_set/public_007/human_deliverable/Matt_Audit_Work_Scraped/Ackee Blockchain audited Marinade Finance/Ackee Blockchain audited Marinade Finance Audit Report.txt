@@ -1,0 +1,142 @@
+Findings
+This chapter shows detailed output of our analysis and testing.
+5.1 General Comments
+This section presents an overall engineering culture that is a crucial precursor of the
+right security.
+5.1.1 Overall code quality
+There are numerous instances of commented out code which is a sign of an
+unstable code not ready for production. Multiple occurrences of additional sanity
+checks are commented out without any comments explaining why those checks
+aren’t needed. For some examples see Appendix E. These need to be removed from
+the repository or documented.
+The code should follow Rust style guide and best practices recommendations. Tools
+like cargo-clippy should be used (see Appendix B).
+5.1.2 Commit culture
+Considerable portions of the commit messages are generic and don't go into any
+detail about the code that's being commited. There are numerous "fix a bug"
+commit messages that don't explain what the bug was and how it was mitigated.
+This makes auditing or even verifying the changes by other developers difficult.
+Some examples:
+commit 6c13e25b “Fixes”
+commit 304f9d2c “fix emergency unstake”
+commit c2abe719 “FIx list remove bug”
+commit 268a2b39 “fix and enhance bot after first mainnet run”
+commit b7771503 "fix"
+Unless the changes to the code are truly self explanatory a proper commit message
+should include description of the change set.
+Adopting a standardized commit message format which would contain the name of
+the component (tests, crank-bot, liquid pool etc.) a short description and a more
+detailed explanation would make future auditing and code review easier.
+We also strongly suggest making Pull Requests and peer code review before
+committ ing mandatory for each commit.
+5.1.3 Comments and documentation
+There is sufficient documentation on how the program is supposed to work in
+general and the relations between the various components. However there is much
+more to be covered. How does the validators selection works, how exactly are the
+fees and rewards calculated and there is no documentation regarding error handling
+and recovery.
+Although critical parts of the code are sufficiently commented there are many more
+which lack comments completely. We suggest mandatory rustdoc annotations for all
+methods so documentation can be generated automatically.
+5.1.4 Release cycle
+There is no clear roadmap towards a stable release ie. which features should be
+finished and included into each deployment. There are no tags in the git repository,
+which would mark a specific commit in the repository as a release candidate. The
+proper release cycle starts with tagging a specific commit, building that revision
+and running tests against it. Only after all tests pass can the release candidate be
+deployed to the network. We didn’t find anything that would suggest this release
+strategy is used.
+5.1.5 Logging
+There is extensive logging in the most critical parts of the code but most of these
+log messages have arbitrary format that makes them impossible to automatically
+parse. A rigid log message format would enable automatic processing of the debug
+log output and automatic notifications could be sent upon detecting suspicious
+activity. An example of such a message is in src/liq_pool/remove_liquidity.rs on
+line 93
+"Someone minted lp tokens without our permission or bug found".
+Log entries like this are impossible to spot with only human supervision. We
+recommend using a log crate to log status (warn, info, fatal, etc.), message and
+additional data for easier debugging, sett ing the alerts or machine processing.
+5.2 Issues
+Using our toolset, manual code review we’ve identified the following issues.
+Low
+Low severity issues are more comments and recommendations rather than security
+issues. We provide hints on how to improve code readability and follow best
+practices. Further actions depend on the development team decision.
+ID Description Contract Line
+L1 Not using a stable toolchain programs/marinad
+e-finance/src/lib.rs
+1
+L2 Not using a linter tool programs/marinad
+e-finance
+L3 Using the outdated dependencies programs/marinad
+e-finance
+L4 Repository contains deploy keys keys/marinade_fin
+ance-keypair.json
+L1: Marinade program is not possible to build with a fully stable Rust environment.
+Currently the program can be build only by the nightly version of Rust. Development
+must be done using a fully stable toolchain, for limiting potential compiler, runtime
+or tool bugs. There is a problem with #![feature(proc_macro_hygiene)] that is not
+allowed for the stable toolchain.
+L2: Marinade program contains code warnings (like unnecessary reference, etc.)
+that should be fixed. A linter must be used regularly during the development of a
+secure application. There should be a lint check added as a new step in your build
+pipeline or pre-commit hook. The clippy linter could be used (cargo clippy) to check
+and fix some of the found warnings automatically by running a cargo clippy or
+cargo clippy --fix command.
+The result of the cargo-clippy command could be seen in Appendix B
+L3: Marinade program uses outdated dependencies. Each outdated dependency
+must be updated or the choice of the version must be justified. The cargo-outdated
+or cargo-upgrades tool must be used to check dependencies status. There should
+be an outdated check as a new step in your build pipeline.
+The result of the cargo-upgrades command could be seen in Appendix C
+L4: Marinade repository contains deploy keys that could cause security problems.
+With att ached deploy keys developers are able to deploy a new program version to
+the testnet, devnet. These keys should take place in some vault or special storage
+for application credentials. Having deploy keys in a repository is a bad practice.
+Medium
+Medium severity issues aren’t security vulnerabilities, but should be clearly clarified
+or fixed.
+ID Description Contract Line
+M1 Using deprecated libraries programs/marinad
+e-finance
+M1: Marinade program uses libraries that are deprecated. These libraries could
+potentially cause security vulnerabilities. The cargo-audit tool must be used to
+check for known vulnerabilities in dependencies. There should be a cargo-audit
+check in your build pipeline to make sure you are using secure dependencies.
+The result of the cargo-audit command could be seen in Appendix D
+High
+High severity issues are security vulnerabilities, which require specific steps and
+conditions to be exploited. These issues have to be fixed.
+ID Description Contract Line
+H1 Using unaudited Anchor framework programs/marinad
+e-finance
+H1: Marinade relies on the Anchor framework for the Solana Sealevel runtime. Anchor
+developers state in their official documentation that:
+● Anchor is in active development, so all APIs are subject to change.
+● This code is unaudited. Use at your own risk.
+Production code should not rely on unstable, unaudited and thus insecure code.
+Critical
+Direct critical security threats, which could be instantly misused to att ack the
+system. These issues have to be fixed.
+✓ We haven’t found any critical severity issues.
+5.3 Testing & Verification
+The project implements two types of tests: Unit Tests, Integration Tests.
+● Unit Tests
+○ The project has modest and incomplete unit tests coverage.
+○ Unit test code coverage is not sufficient for production release.
+○ Branch coverage is 1.21%
+○ Function coverage is 1.67%
+○ Lines coverage is 2.74%
+● Integration Tests
+○ The project has extensive Integration tests coverage.
+○ The project tests are not completed - there are some todos and
+comments, for example:
+■ delayed_unstake.rs - lines 79, 93, 186
+■ delayed_unstake.rs - line 89
+■ test_add_remove_liquidity.rs - lines 94, 110, 136, 143
+■ test_add_remove_liquidity.rs - lines 119 - 327
+Production code should not contain todos or commented functions,
+methods.
+General code coverage is not sufficient for production release. We recommend
+extending unit test coverage by adding more tests and covering edge cases

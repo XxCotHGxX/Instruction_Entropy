@@ -1,0 +1,116 @@
+========================================================================
+Finding #1: Use of Floating Pragma
+Severity : Low
+Description:
+The use of floating pragma versions in Solidity compiler directives can lead to inconsistent compilation results and unexpected behavior due to differences between compiler versions. This can affect code safety and maintainability.
+
+Recommendation:
+Avoid using floating pragma (e.g., `^0.8.x`). Instead, specify a fixed compiler version or a narrow range to ensure consistent builds and easier auditing.
+
+Repository
+URL: https://github.com/LayerZero-Labs/LayerZero
+========================================================================
+
+========================================================================
+Finding #2: Oracle & Relayer Control Mechanism Missing
+Severity : Medium
+Description:
+The protocol currently lacks a mechanism to independently control or manage Oracles and Relayers. This could create centralization risks or vulnerabilities in message delivery and verification processes.
+
+Recommendation:
+Design and implement an Oracle and Relayer control mechanism to improve decentralization and trustlessness of the protocol’s message passing system.
+
+Repository
+URL: https://github.com/LayerZero-Labs/LayerZero
+========================================================================
+
+========================================================================
+Finding #3: Inconsistent Compiler Versions Used Across the Project
+Severity : Low
+Description:
+Different contracts or parts of the project use varying Solidity compiler versions, which may cause inconsistencies or subtle bugs during compilation and runtime.
+
+Recommendation:
+Use the same Solidity compiler version consistently across the entire project to maintain uniformity and prevent version-related bugs.
+
+Repository
+URL: https://github.com/LayerZero-Labs/LayerZero
+========================================================================
+
+========================================================================
+Finding #4: Use of Older Compiler Versions
+Severity : Low
+Description:
+Some contracts use compiler versions older than six months, missing out on recent language improvements, bug fixes, and security patches.
+
+Recommendation:
+Update to a Solidity compiler version that is no more than six months old to leverage latest language improvements and security fixes.
+
+Repository
+URL: https://github.com/LayerZero-Labs/LayerZero
+========================================================================
+
+========================================================================
+Finding #5: Usage of SafeMath Library Instead of Native Solidity Checks
+Severity : Low
+Description:
+The project uses an external SafeMath library instead of Solidity’s built-in overflow checks available in versions >=0.8.0, leading to unnecessary dependencies and complexity.
+
+Recommendation:
+Use Solidity compiler version >=0.8.0 and remove external SafeMath libraries, relying on native overflow checks for gas efficiency and simplicity.
+
+Repository
+URL: https://github.com/LayerZero-Labs/LayerZero
+========================================================================
+
+========================================================================
+Finding #6: Unused Code Present in the Repository
+Severity : Low
+Description:
+The codebase contains unused functions and variables which may confuse developers and auditors and potentially increase attack surface if left unmaintained.
+
+Recommendation:
+Remove all unused code to improve clarity, maintainability, and reduce potential security risks.
+
+Repository
+URL: https://github.com/LayerZero-Labs/LayerZero
+========================================================================
+
+========================================================================
+Finding #7: Use of Assembly Code Without Adequate Justification
+Severity : Low
+Description:
+Some parts of the code use inline assembly without clear justification, which can increase risk due to the complexity and difficulty of auditing assembly.
+
+Recommendation:
+Use assembly code sparingly and only when necessary. Provide thorough documentation and justification where assembly is used to facilitate auditing and maintenance.
+
+Repository
+URL: https://github.com/LayerZero-Labs/LayerZero
+========================================================================
+
+========================================================================
+Finding #8: General Code Quality and Documentation Recommendations
+Severity : Low
+Description:
+Several low severity issues found related to code clarity, documentation, and best practices. These are not direct vulnerabilities but improving them would enhance maintainability and security posture.
+
+Recommendation:
+Follow Solidity best practices, improve code comments, documentation, and remove code duplications.
+
+Repository
+URL: https://github.com/LayerZero-Labs/LayerZero
+========================================================================
+
+========================================================================
+Finding #9: Hypothetical Issues Without Direct Exploitability
+Severity : Medium
+Description:
+A small number of medium severity issues were identified which are not directly exploitable but require clarification or fixing to avoid potential future risks.
+
+Recommendation:
+Clarify and address these medium severity points to ensure they do not evolve into exploitable vulnerabilities.
+
+Repository
+URL: https://github.com/LayerZero-Labs/LayerZero
+========================================================================

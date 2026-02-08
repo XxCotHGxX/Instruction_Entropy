@@ -1,0 +1,309 @@
+Repository URL: https://github.com/Kapital-DAO/kap-contracts/tree/a8fe3c9
+Full commit hash: a8fe3c9
+========================================================================
+Findings Summary:
+==================
+M1: The VESTING_CREATOR role can vote multiple
+times
+Medium severity issue
+Impact: High Likelihood: Low
+Target: GovernanceV2.sol Type: Trust Model
+Description
+Vesting Creator can create vesting for a short period with a beneficiary
+address that he/she owns. Then, Vesting Creator can vote for the proposal
+from the beneficiary address and wait until the vesting ends to claim it and
+transfer it back to his address with the role. After that, Vesting Creator can
+create another vesting for other beneficiary addresses and vote again. This
+way, Vesting Creator can vote multiple times for the same proposal.
+Exploit Scenario
+Bob is the Vesting Creator.
+• Bob creates vesting for his address A with a short period (shorter than the
+voting period).
+• Bob votes for the proposal from his address A.
+• Bob waits until the vesting ends.
+• Bob claims the vesting and transfers it back to his initial address.
+• Bob creates another vesting for his address B and repeats the steps
+above.
+Recommendation
+Do not allow to claim vesting during the voting period.
+Solution (Revision 1.1)
+Acknowledged by the client.
+The Vesting Creator role is assigned to a Gnosis multisig with
+shared control by five wallets. In the unlikely event that
+undesired behavior occurs, Vesting as a Voting Weight Source
+can be turned off in Governance by the Voting Manager. Any
+malicious proposals created can then be vetoed by the Vetoer.
+===========================================================================
+M2: Governance can lock funds forever
+Medium severity issue
+Impact: High Likelihood: Low
+Target: TimeLock.sol Type: DoS
+Listing 1. Excerpt from TimeLock.updateLockPeriod
+96 function updateLockPeriod(uint256 newLockPeriod) external {
+97 require(newLockPeriod > 0, "TimeLock: invalid lock period");
+98 require(
+99 msg.sender == governanceRegistry.governance(),
+100 "TimeLock: Only governance"
+101 );
+102 lockPeriod = newLockPeriod;
+103 }
+104 }
+Description
+Governance can decide to update the lock period to an arbitrary value. If a
+user is slow to react and doesn’t withdraw his funds in time, the funds can
+end up being locked to an arbitrary amount of time.
+The TimeLock contract contains the function updateLockPeriod (see Listing 1)
+which allows the governance to update the lock period. There is no restriction
+on the value that can be set.
+Exploit scenario
+Alice locks her funds in the TimeLock contract. The governance proposes a
+new proposal to update the lock period to some high value. The current lock
+period is longer than the voting period and Alice is thus unable to withdraw
+the funds in time.
+Such a scenario is rather unlikely to happen. However, some powerful
+governors may get hacked, and the attacker can decide to update the lock
+period to a high value.
+Recommendation
+Decide upon a reasonable maximum lock period and restrict the
+updateLockPeriod function to only allow values below that maximum.
+Solution (Revision 1.1)
+Acknowledged by the client.
+The Timelock lock period should be at least equal to the Voting
+Period. This is the minimum to prevent double spending. To
+prevent malicious proposals from being created and executed
+within the lock period, the Timelock lock period should not be
+set above the WaitToExecute period in Governance. Malicious
+proposals can also be vetoed by the Vetoer.
+===========================================================================
+M3: Dynamic changes of the lock period
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: TimeLock.sol Type: DoS
+Listing 2. Excerpt from TimeLock.updateLockPeriod
+96 function updateLockPeriod(uint256 newLockPeriod) external {
+97 require(newLockPeriod > 0, "TimeLock: invalid lock period");
+98 require(
+99 msg.sender == governanceRegistry.governance(),
+100 "TimeLock: Only governance"
+101 );
+102 lockPeriod = newLockPeriod;
+103 }
+104 }
+Listing 3. Excerpt from TimeLock.unlock
+61 require(
+62 block.timestamp > lockAgreement.start + lockPeriod,
+63 "TimeLock: early collect"
+64 );
+Description
+The lockPeriod parameter, which dictates the minimal amount of time that
+must pass before a user can withdraw their funds, can be changed
+dynamically (see Listing 2). When a user locks his funds a LockAgreement is
+created. The agreement is a struct that contains important parameters for
+the given lock.
+However, the LockAgreement lacks a lockPeriod field. This means that the
+lockPeriod to which a user agreed can be changed dynamically to a new value
+- that is because the unlock function uses the current value of the lockPeriod,
+see Listing 3. That can result in the user’s funds being locked longer than he
+initially agreed to.
+Exploit scenario
+Alice locks her funds for 2 weeks. However, the lockPeriod is changed by the
+governance to 1 month. Now, Alice can’t withdraw her funds for 1 month.
+Recommendation
+Implement logic that ensures that the lockPeriod remains constant for a given
+LockAgreemnt.
+Solution (Revision 1.1)
+Acknowledged by the client.
+If the Timelock lock period is set below the WaitToExecute
+period, users will have the opportunity to withdraw deposits
+before the change is implemented.
+===========================================================================
+L1: Lack of project identifier for address
+validation
+Low severity issue
+Impact: Low Likelihood: Low
+Target: **/* Type: DoS
+Listing 4. Excerpt from Governance.constructor
+36 constructor(
+37 address _vesting,
+38 address _teamMultisig
+39 ) {
+40 require(_vesting != address(0), "Governance: Zero address");
+41 require(_teamMultisig != address(0), "Governance: Zero
+  address");
+42 
+43 vesting = IVotingWeightSource(_vesting);
+44 _grantRole(VETOER, _teamMultisig);
+45 }
+Listing 5. Project Identifier
+  bytes32 public constant CONTRACT_TYPE = keccak256("Playground
+Governance");
+Listing 6. Require statement for Data validation
+  require(
+  Governance(governance).CONTRACT_TYPE() == keccak256("Playground
+Governance"),
+  "Not a Playground Governance"
+  );
+Listing 7. Excerpt from GovernanceRegistry.changeGovernance
+40 IGovernance _newGovernance = IGovernance(newGovernance);
+41 require(_newGovernance.votingPeriod() > 0, "Registry: Invalid
+  voting period");
+Description
+Currently, the contracts in constructors are only checked against the zero
+address (see Listing 4).
+This approach can filter out the most basic mistakes, but it is not sufficient
+to ensure more deep address validation. Further validation can be done by
+using contract/project identifiers.
+Such an identifier can be a constant string or a hash of a string (see Listing
+5). Upon construction of a new contract that requires a governance address
+a check of the identifier would be done (see Listing 6). The same check can
+also be done in the upgrade function.
+In the upgrade function changeGovernance in GovernanceRegistry a check similar
+to the identifier check is done (see Listing 7). The check requires the contract
+at the given address to implement the votingPeriod function. It is almost
+impossible that an incorrectly passed address would pass this check because
+the probability of a random contract implementing such a function is very
+low.
+Exploit scenario
+A contract deployer passes a wrong address to a constructor of one of the
+Playground contracts. The address is not the zero address, but it is not a valid
+address of a Playground contract either. As a result, a contract is deployed
+with the wrong parameters.
+Recommendation
+It is recommended to use more stringent input data validation using the
+project-wide identifier - not only in the upgrade function but also in the
+constructors.
+Such an approach might be not possible to implement when the contracts are
+circularly dependent on each other. Yet, this approach should be
+implemented where possible.
+Solution (Revision 1.1)
+Acknowledged by the client.
+Due to the staggered nature of the contract deployments and
+the interdependency of the contracts themselves, address
+validation has been moved off-chain to simplify the
+deployment/upgrade processes. The contract deployments
+were thoroughly verified by the team following mainnet
+deployment.
+===========================================================================
+W1: Pitfalls of upgradeability
+Impact: Warning Likelihood: N/A
+Target: Governance.sol,
+GovernanceRegistry.sol
+Type: Upgradeability
+Description
+The employed upgradeability system uses a GovernanceRegistry contract
+which holds the current active governance contract. When a new upgrade is
+needed, a new separate Governance contract is deployed, and only the
+address in the registry is changed. The only contract that can change the
+address in the registry is the current active governance contract.
+Such an approach to upgradeability can have some downsides:
+1. Upgrading to new governance can lead to double spending on the old governance
+If the current governance contract uses a TimeLock contract as a source for
+voting weight and the new governance contract has a shorter voting period
+than the current one and an upgrade to the new version is employed, then a
+double-spending of tokens can happen on the old governance.
+This issue would manifest itself if the following constraints and steps were
+followed:
+1. The TimeLock contract queries the current governance using the registry.
+2. The old governance uses the lock contract.
+3. The TimeLock contract uses the length of the voting period of the new
+governance.
+4. Because the new governance has a shorter voting period it can lead to
+double spending because the TimeLock contract will return non-zero voting
+weight in a shorter time window.
+◦ This will be an issue only if the old governance can still make some
+relevant calls to external addresses. Because the governance is mainly
+used to manipulate funds and the GovernanceFund queries the current
+governance registry, this most likely will not be an issue. It is mainly a
+warning if the behavior changes in future upgrades.
+◦ More generally, this could be an issue for every outdated component
+that queries some external contract which again queries the
+GovernanceRegistry. As a result, the information retrieved using the
+current governance contract might not always be correct as it is only
+relevant to a different version of the governance contract.
+2. Independence of the state of the governance contracts
+The new governance contracts will not share the state as they are
+independent contracts. That could eventually lead to compatibility issues.
+3. Interaction with the old governance contracts
+Users can still interact with the old governance contracts even after the
+address in GovernanceRegistry was updated to a new version. This might
+become a problem in the future as the governance contracts will evolve and
+their logic will change. Mainly if some important interactions with external
+addresses could still be made.
+4. Monitoring of old governance contracts
+As the number of governance contracts will grow it might become harder and
+harder to monitor them all. But again, this might only be a problem if the old
+governance contracts could still make important external calls.
+Solution (Revision 1.1)
+Acknowledged by the client.
+Deprecated Governance contracts can be disabled by turning
+off all Voting Weight Sources.
+===========================================================================
+W2: Execute could not be triggered if there are
+burned a lot of KAP tokens
+Impact: Warning Likelihood: N/A
+Target: GovernanceV2.sol Type: Logic error
+Listing 8. Excerpt from GovernanceV2.execute
+184 require(yaysTotal + naysTotal >= QUORUM, "Governance: Quorum");
+Description
+The QUORUM constant is set to 4% of the total supply of KAP tokens. Each
+proposal execution has to have bigger attendance (yays + nays) than the
+QUORUM constant. The problem is that the QUORUM constant is not updated
+when the KAP token is burned. So if the KAP token is burned a lot, the
+QUORUM constant will be too big and it could cause the execute function
+could not be triggered in a basic scenario.
+Recommendation
+Consider making the QUORUM constant dynamic.
+Solution (Revision 1.1)
+Acknowledged by the client.
+The team is carefully monitoring the smart contracts on-chain
+for unusual behavior. If the total supply of KAP is anticipated to
+change dramatically, the quorum parameter can be updated via
+a Governance upgrade.
+===========================================================================
+I1: Boost can only be turned off
+Impact: Info Likelihood: N/A
+Target: Staking.sol Type: Contract logic
+Description
+The Staking contract allows users to accumulate additional rewards through a
+boost. Whether the boost is applied during claiming rewards is decided by the
+boostOn variable. This variable is initialized to true upon the construction of
+the contract and can be set to false by admin addresses. However, after
+turning it off, it is not possible to set it back on.
+Recommendation
+Ensure that such behavior is aligned with the expected behavior of the
+staking contract.
+Solution (Revision 1.1)
+Acknowledged by the client.
+Boosting is a core feature of Staking and will only be disabled in
+the event of undesired behavior or in the interest of the DAO.
+===========================================================================
+I2: Missing code comments
+Impact: Info Likelihood: N/A
+Target: Delegator.sol, Timelock.sol Type: Contract logic
+Description
+The contracts Delegator.sol and Timelock.sol are missing code comments.
+Code comments are important to easily understand the code, thus making it
+easier to audit and maintain.
+Recommendation
+Add code comments (including NatSpec) to the contracts.
+===========================================================================
+I3: Ambiguous error messages
+Impact: Info Likelihood: N/A
+Target: **/* Type: Logging
+Listing 9. Excerpt from Staking._boost
+184 require(block.timestamp < end, "Staking: Remaining");
+Listing 10. Excerpt from Staking._boost
+194 require(
+195 MIN_LOCK <= newLock && newLock <= MAX_LOCK,
+196 "Staking: New lock"
+197 );
+Description
+Many places in the code base contain ambiguous error messages (eg. see
+Listing 9, Listing 9). Such errors do not contain enough information to easily
+parse why the given transaction failed.
+Additionally, the errors contain the name of the contract they originated in.
+This information, however, can be parsed from the failed transaction.
+Recommendation
+Use precise error messages which would be more descriptive about the
+causes of the erroneous call. Such messages will allow for a more
+straightforward analysis of failed transactions.

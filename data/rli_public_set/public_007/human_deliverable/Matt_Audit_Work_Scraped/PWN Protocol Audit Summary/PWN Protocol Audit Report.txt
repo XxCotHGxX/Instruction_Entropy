@@ -1,0 +1,502 @@
+Repository URL: https://github.com/pwnfinance/pwn-protocol/commit/6f390c
+[4] full commit hash: 6f390c8a6627a81a90778f5aaf0443aaf39e7a9a
+==============================================================================
+Findings Summary:
+=================
+C1: Loan refinancing reentrancy
+Critical severity issue
+Impact: High Likelihood: High
+Target: PWNSimpleLoan.sol Type: Reentrancy
+Description
+The createLOAN function enables new loan creation and existing loan
+refinancing operations. During refinancing, the function closes the previous
+loan and creates a new one while maintaining the same collateral. The
+function optionally supports ERC-2612 permit functionality for loan credit
+collection from the lender.
+Listing 1. Excerpt from PWNSimpleLoan.createLOAN
+437 if (callerSpec.permitData.length > 0) {
+438 Permit memory permit = abi.decode(callerSpec.permitData, (Permit));
+439 _checkPermit(msg.sender, loanTerms.credit.assetAddress, permit);
+440 _tryPermit(permit);
+441 }
+442 
+443 // Settle the loan
+444 if (callerSpec.refinancingLoanId == 0) {
+445 // Transfer collateral to Vault and credit to borrower
+446 _settleNewLoan(loanTerms, lenderSpec);
+447 } else {
+448 // Update loan to repaid state
+449 _updateRepaidLoan(callerSpec.refinancingLoanId);
+450 
+451 // Repay the original loan and transfer the surplus to the borrower if
+  any
+452 _settleLoanRefinance({
+453 refinancingLoanId: callerSpec.refinancingLoanId,
+454 loanTerms: loanTerms,
+455 lenderSpec: lenderSpec
+456 });
+457 }
+During loan refinancing operations, the permit call executes before the
+previous loan is marked as repaid. This sequence creates a reentrancy
+vulnerability window, enabling an attacker to execute multiple createLOAN
+function calls, resulting in the division of the previous loan into multiple loans.
+This finding was discovered by a Wake static analysis detector. See Appendix
+B for more details, including the attack transaction call trace.
+
+Recommendation
+Change the state of the loan before any external call, i.e., move the
+_updateRepaidLoan(callerSpec.refinancingLoanId) call before any external call.
+Apply reentrancy guard to all state-changing functions of the PWN vault.
+Partial solution 2.0
+The _updateRepaidLoan state-changing function call was moved before any
+external call, and the permit functionality was removed. However, reentrancy
+guards were not applied.
+Fix 2.1
+Reentrancy guards were added to all external state-changing functions in
+the PWNVault contract with an exception of the makeExtensionProposal
+function which was evaluated as safe.
+==========================================================================
+C2: Incorrect optimization in loan refinancing
+Critical severity issue
+Impact: High Likelihood: High
+Target: PWNSimpleLoan.sol Type: Logic error
+Description
+During loan refinancing, the _settleLoanRefinance function implements an
+optimization that only pulls the surplus credit token amount from the lender
+when the original and new loan lenders are identical. This optimization omits
+pulling the common credit amount shared between the previous and new
+loans.
+Listing 2. Excerpt from PWNSimpleLoan._settleLoanRefinance
+604 bool shouldTransferCommon =
+605 loanTerms.lender != loanOwner ||
+606 (loan.originalLender == loanOwner && loan.originalSourceOfFunds !=
+  lenderSpec.sourceOfFunds);
+Listing 3. Excerpt from PWNSimpleLoan._settleLoanRefinance
+625 if (shouldTransferCommon) {
+626 creditHelper.amount = common;
+627 _pull(creditHelper, loanTerms.lender);
+628 }
+The credit amount of the previous loan is claimed through the
+tryClaimRepaidLOAN call, considering the optimization. In this scenario, only
+the surplus amount is transferred to the lender.
+Listing 4. Excerpt from PWNSimpleLoan._settleLoanRefinance
+642 try this.tryClaimRepaidLOAN({
+643 loanId: refinancingLoanId,
+644 creditAmount: (shouldTransferCommon ? common : 0) + shortage,
+645 loanOwner: loanOwner
+646 }) {} catch {
+647 // Note: Safe transfer or supply to a pool can fail. In that case the
+  LOAN token stays in repaid state and
+648 // waits for the LOAN token owner to claim the repaid credit. Otherwise
+  lender would be able to prevent
+649 // anybody from repaying the loan.
+650 }
+However, the tryClaimRepaidLOAN function may revert or return early under
+specific conditions, resulting in the previous loan remaining in a "paid back"
+state without indicating that only the surplus amount (excluding the
+common part) is claimable.
+This finding was discovered through a Wake manually-guided fuzzing
+campaign conducted as part of the audit. See Appendix B for more details.
+
+Recommendation
+Perform an additional pull of the common credit amount from the lender when
+the optimization is enabled and the tryClaimRepaidLOAN function call reverts.
+Convert all early returns in the tryClaimRepaidLOAN function to reverts.
+Fix 2.0
+The issue was fixed by following the recommendation.
+Listing 6. Excerpt from PWNSimpleLoan._settleLoanRefinance
+625 try this.tryClaimRepaidLOAN({
+626 loanId: refinancingLoanId,
+627 creditAmount: (shouldTransferCommon ? common : 0) + shortage,
+628 loanOwner: loanOwner
+629 }) {} catch {
+630 // Note: Safe transfer or supply to a pool can fail. In that case
+  the LOAN token stays in repaid state and
+631 // waits for the LOAN token owner to claim the repaid credit.
+  Otherwise lender would be able to prevent
+632 // anybody from repaying the loan.
+633 
+634 // Transfer loan common to the Vault if necessary
+635 // Shortage part is already in the Vault
+636 if (!shouldTransferCommon) {
+637 creditHelper.amount = common;
+638 if (lenderSpec.sourceOfFunds != loanTerms.lender) {
+639 // Lender is not the source of funds
+640 // Withdraw credit asset to the lender first
+641 _withdrawCreditFromPool(creditHelper, loanTerms,
+  lenderSpec);
+642 }
+643 _pull(creditHelper, loanTerms.lender);
+644 }
+645 }
+646 }
+=====================================================================
+M1: Chainlink common denominator bad logic
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: Chainlink.sol Type: Logic error
+Description
+The function fetchPricesWithCommonDenominator is responsible for fetching the
+credit and collateral prices using the same denominator. Each price may be
+fetched with a different denominator. In such cases, an additional query is
+executed to fetch the price of one denominator against the other.
+Subsequent calculations are performed to convert one of the credit or
+collateral prices to the other denominator.
+Listing 7. Excerpt from Chainlink.fetchPricesWithCommonDenominator
+113 if (creditDenominator == ChainlinkDenominations.USD) {
+114 (success, creditPrice, creditPriceDecimals) = convertPriceDenominator({
+115 feedRegistry: feedRegistry,
+116 nominatorPrice: creditPrice,
+117 nominatorDecimals: creditPriceDecimals,
+118 originalDenominator: creditDenominator,
+119 newDenominator: collateralDenominator
+120 });
+121 } else {
+122 (success, collateralPrice, collateralPriceDecimals) =
+  convertPriceDenominator({
+123 feedRegistry: feedRegistry,
+124 nominatorPrice: collateralPrice,
+125 nominatorDecimals: collateralPriceDecimals,
+126 originalDenominator: collateralDenominator,
+127 newDenominator: collateralDenominator == ChainlinkDenominations.USD
+128 ? creditDenominator
+129 : ChainlinkDenominations.ETH
+130 });
+When neither of the denominators is USD, the function incorrectly fetches
+the price of the collateral denominator against ETH. This issue arises when the
+collateral denominator is also ETH.
+This finding was discovered through a Wake manually-guided fuzzing
+campaign performed as a part of the audit. See Appendix B for more details.
+
+Recommendation
+Add an additional if-else branch to correctly select the appropriate common
+denominator. Consider that ETH/BTC and BTC/ETH feeds may not be available
+simultaneously.
+Fix 2.0
+The issue was fixed by re-designing elastic Chainlink loan proposals. The user
+is now responsible for specifying the correct denominators used to calculate
+the price.
+=============================================================================
+M2: Outdated/reverting Chainlink feed causes
+DoS
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: Chainlink.sol Type: Denial of service
+Description
+The fetchPrice function retrieves the latest price from a Chainlink feed using
+the feed registry.
+Listing 8. Excerpt from Chainlink
+193 function fetchPrice(IChainlinkFeedRegistryLike feedRegistry, address asset,
+  address denominator)
+194 internal
+195 view
+196 returns (bool, uint256, uint8)
+197 {
+198 try feedRegistry.getFeed(asset, denominator) returns
+  (IChainlinkAggregatorLike aggregator) {
+199 (, int256 price,, uint256 updatedAt,) =
+  aggregator.latestRoundData();
+200 if (price < 0) {
+201 revert ChainlinkFeedReturnedNegativePrice({ asset: asset,
+  denominator: denominator, price: price });
+202 }
+203 if (block.timestamp - updatedAt > MAX_CHAINLINK_FEED_PRICE_AGE) {
+204 revert ChainlinkFeedPriceTooOld({ asset: asset, updatedAt:
+  updatedAt });
+205 }
+206 
+207 uint8 decimals = aggregator.decimals();
+208 return (true, uint256(price), decimals);
+209 } catch {
+210 return (false, 0, 0);
+211 }
+212 }
+The function is expected to return false if the price feed could not be found,
+allowing the logic to try a different denominator (one of USD, BTC, ETH).
+However, if either of aggregator.latestRoundData() or aggregator.decimals()
+calls reverts, the returned price is negative or the feed is too old, the whole
+execution reverts.
+This vulnerability was identified through a Wake manually-guided fuzzing
+campaign during the audit. For detailed information, refer to Appendix B.
+
+Recommendation
+Return false if either of the external calls reverts, or the returned price is
+negative or the feed is too old.
+Fix 2.0
+The issue was fixed by re-designing elastic Chainlink loan proposals. The user
+is now responsible for specifying the correct denominators used to calculate
+the price. The contract implementation no longer tries to find the correct
+denominator.
+===========================================================================
+M3: Non-upgradable base contracts
+Medium severity issue
+Impact: High Likelihood: Low
+Target: PWNConfig.sol Type: Storage clashes
+Description
+The PWNConfig contract inherits from non-upgradeable implementations of
+the Initializable and Ownable2Step contracts. These non-upgradeable
+implementations lack storage gap protection, requiring strict adherence to
+the current storage layout in future PWNConfig contract revisions.
+wake print storage-layout
+                               PWNConfig storage layout                               
+┏━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓
+┃ Slot ┃ Offset ┃ Name                 ┃ Type                        ┃ Contract      ┃
+┡━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ 0    │ 0      │ _owner │ address                     │ Ownable │
+│ 1    │ 0      │ _pendingOwner │ address                     │ Ownable2Step │
+│ │ 20     │ _initialized │ uint8                       │ Initializable │
+│ │ 21     │ _initializing │ bool                        │ Initializable │
+│ │ 22     │ fee │ uint16                      │ PWNConfig │
+│ 2    │ 0      │ feeCollector │ address                     │ PWNConfig │
+│ 3    │ 0      │ _loanMetadataUri │ mapping(address => string)  │ PWNConfig │
+│ 4    │ 0      │ _sfComputerRegistry │ mapping(address => address) │ PWNConfig │
+│ 5    │ 0      │ _poolAdapterRegistry │ mapping(address => address) │ PWNConfig │
+└──────┴────────┴──────────────────────┴─────────────────────────────┴───────────────┘
+Figure 1. PWNConfig Storage Layout
+
+Recommendation
+Consider re-deploying a new instance of the PWNConfig contract with a new
+proxy and upgradable base contracts. If not possible, ensure the storage
+layout is strictly followed in the next PWNConfig revisions.
+Fix 2.0
+The PWNConfig contract now inherits from the Ownable2StepUpgradeable
+contract.
+===========================================================================
+M4: Incorrect EIP-712 typehash
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: core/src/loan/terms/simple/pr
+oposal/*.sol
+Type: Standards
+violation
+Description
+The protocol implements multiple loan proposal types, each containing a
+Proposal structure that defines proposal parameters. These proposals can be
+signed by lenders or borrowers using EIP-712.
+Listing 9. Excerpt from PWNSimpleLoanSimpleProposal
+50 struct Proposal {
+51 MultiToken.Category collateralCategory;
+52 address collateralAddress;
+53 uint256 collateralId;
+54 uint256 collateralAmount;
+55 bool checkCollateralStateFingerprint;
+56 bytes32 collateralStateFingerprint;
+57 address creditAddress;
+58 uint256 creditAmount;
+59 uint256 availableCreditLimit;
+60 bytes32 utilizedCreditId;
+61 uint256 fixedInterestAmount;
+62 uint24 accruingInterestAPR;
+63 uint32 durationOrDate;
+64 uint40 expiration;
+65 address allowedAcceptor;
+66 address proposer;
+67 bytes32 proposerSpecHash;
+68 bool isOffer;
+69 uint256 refinancingLoanId;
+70 uint256 nonceSpace;
+71 uint256 nonce;
+72 address loanContract;
+73 }
+A type mismatch exists between the accruingInterestAPR parameter
+definitions:
+• Proposal structure: uint24
+• EIP-712 typehash: uint40
+Listing 10. Excerpt from PWNSimpleLoanSimpleProposal
+21 bytes32 public constant PROPOSAL_TYPEHASH = keccak256(
+22 "Proposal(uint8 collateralCategory,address collateralAddress,uint256
+  collateralId,uint256 collateralAmount,bool
+  checkCollateralStateFingerprint,bytes32 collateralStateFingerprint,address
+  creditAddress,uint256 creditAmount,uint256 availableCreditLimit,bytes32
+  utilizedCreditId,uint256 fixedInterestAmount,uint40
+  accruingInterestAPR,uint32 durationOrDate,uint40 expiration,address
+  allowedAcceptor,address proposer,bytes32 proposerSpecHash,bool
+  isOffer,uint256 refinancingLoanId,uint256 nonceSpace,uint256 nonce,address
+  loanContract)"
+23 );
+This inconsistency affects the following contract files:
+• PWNSimpleLoanDutchAuctionProposal.sol
+• PWNSimpleLoanElasticChainlinkProposal.sol
+• PWNSimpleLoanElasticProposal.sol
+• PWNSimpleLoanListProposal.sol
+• PWNSimpleLoanSimpleProposal.sol
+This finding was identified by a Wake static analysis detector. For additional
+details, refer to Appendix B.
+
+Recommendation
+Unify the accruingInterestAPR type in the Proposal structure and the EIP-712
+type hash for all the aforementioned contracts.
+Fix 2.0
+The issue was fixed by using uint24 for the accruingInterestAPR parameter in
+the EIP-712 type hashes.
+===========================================================================
+L1: Decimal detection may lead to unexpected
+reverts
+Low severity issue
+Impact: Medium Likelihood: Low
+Target: safeFetchDecimals.sol Type: Logic error
+Description
+The safeFetchDecimals function executes a static call to the target contract
+using the decimals() function signature. The function reverts if the target
+contract does not implement the decimals() function interface.
+Listing 11. Excerpt from safeFetchDecimals
+7 function safeFetchDecimals(address asset) view returns (uint256) {
+8 bytes memory rawDecimals = Address.functionStaticCall(asset,
+  abi.encodeWithSignature("decimals()"));
+9 if (rawDecimals.length == 0) {
+10 return 0;
+11 }
+12 return abi.decode(rawDecimals, (uint256));
+13 }
+
+Recommendation
+Consider returning 0 even in the case of an unsuccessful low-level static call.
+Fix 2.0
+The safeFetchDecimals function now returns 0 even if the low-level static call
+fails.
+===========================================================================
+W1: Older versions of Aave and Compound not
+supported
+Impact: Warning Likelihood: N/A
+Target: N/A Type: Code quality
+Description
+The project allows to withdraw credit from Aave or Compound when a new
+loan is being created. However, only the latest versions of Aave (v3) and
+Compound (v3) are supported.
+Recommendation
+Consider adding support for older versions of Aave and Compound protocols.
+Acknowledgment 2.0
+The client acknowledged the finding as being intended by design.
+===========================================================================
+W2: creditPerCollateralUnit division by zero
+Impact: Warning Likelihood: N/A
+Target: N/A Type: Data validation
+Description
+The creditPerCollateralUnit variable specifies the exchange rate between
+collateral and credit units. When this variable is set to zero, the operation
+results in a division by zero error without providing an appropriate error
+message to the user.
+Recommendation
+Consider raising a custom user-defined error when creditPerCollateralUnit is
+zero.
+Fix 2.0
+The contract logic now reverts with a new ZeroCreditPerCollateralUnit error
+if the creditPerCollateralUnit is zero.
+===========================================================================
+W3: _checkTransfer sender and receiver collision
+Impact: Warning Likelihood: N/A
+Target: PWNVault.sol Type: Data validation
+Description
+The _checkTransfer function validates token transfers by verifying either the
+sender’s negative balance difference or the receiver’s positive balance
+difference.
+Listing 12. Excerpt from PWNVault
+155 function _checkTransfer(
+156 MultiToken.Asset memory asset,
+157 uint256 originalBalance,
+158 address checkedAddress,
+159 bool checkIncreasingBalance
+160 ) private view {
+161 uint256 expectedBalance = checkIncreasingBalance
+162 ? originalBalance + asset.getTransferAmount()
+163 : originalBalance - asset.getTransferAmount();
+164 
+165 if (expectedBalance != asset.balanceOf(checkedAddress)) {
+166 revert IncompleteTransfer();
+167 }
+168 }
+The validation logic fails to handle scenarios where the sending address
+matches the receiving address.
+Recommendation
+Either revert with a different error message if the sending source is the same
+as the receiver address, or allow such a case and adjust the logic to handle it.
+Fix 2.0
+The _checkTransfer function now reverts with a custom user-defined error if
+the sender and receiver are the same.
+===========================================================================
+I1: revokeNonces nonce space can be cached
+Impact: Info Likelihood: N/A
+Target: PWNRevokedNonce.sol Type: Gas optimization
+Description
+The revokeNonces function performs redundant storage reads when revoking
+multiple nonces in the current nonce space:
+Listing 13. Excerpt from PWNRevokedNonce
+111 function revokeNonces(uint256[] calldata nonces) external {
+112 for (uint256 i; i < nonces.length; ++i) {
+113 _revokeNonce(msg.sender, _nonceSpace[msg.sender], nonces[i]);
+114 }
+115 }
+While the nonce space remains constant throughout the function execution,
+the Solidity optimizer may not consolidate multiple storage reads into a
+single operation, resulting in unnecessary gas costs.
+Recommendation
+Load the _nonceSpace[msg.sender] value before the loop and use it instead of
+reading from the storage in each iteration.
+Fix 2.0
+The inefficiency was fixed by caching the nonce space before the loop.
+===========================================================================
+I2: LoanDefaulted(uint40) error parameter not
+named
+Impact: Info Likelihood: N/A
+Target: PWNSimpleLoan.sol Type: Code quality
+Description
+LoanDefaulted(uint40) is the only error without a parameter name.
+Recommendation
+Consider adding a variable name to the error for better readability.
+Fix 2.0
+The LoanDefaulted parameter was named timestamp.
+=============================================================
+M5: Incorrect EIP-712 data encoding
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: PWNSimpleLoanElasticPropos
+al.sol
+Type: Standards
+violation
+Description
+The protocol implements multiple loan proposal types, each containing a
+Proposal structure that defines proposal parameters. These proposals can be
+signed by lenders or borrowers using EIP-712.
+Listing 14. Excerpt from PWNSimpleLoanElasticChainlinkProposal
+71 struct Proposal {
+72 MultiToken.Category collateralCategory;
+73 address collateralAddress;
+74 uint256 collateralId;
+75 bool checkCollateralStateFingerprint;
+76 bytes32 collateralStateFingerprint;
+77 address creditAddress;
+78 address[] feedIntermediaryDenominations;
+79 bool[] feedInvertFlags;
+80 uint256 loanToValue;
+81 uint256 minCreditAmount;
+82 uint256 availableCreditLimit;
+83 bytes32 utilizedCreditId;
+84 uint256 fixedInterestAmount;
+85 uint24 accruingInterestAPR;
+86 uint32 durationOrDate;
+87 uint40 expiration;
+88 address allowedAcceptor;
+89 address proposer;
+90 bytes32 proposerSpecHash;
+91 bool isOffer;
+92 uint256 refinancingLoanId;
+93 uint256 nonceSpace;
+94 uint256 nonce;
+95 address loanContract;
+96 }
+The Proposal structure in the PWNSimpleLoanElasticChainlinkProposal contract
+contains feedIntermediaryDenominations and feedInvertFlags array members.
+The implementation uses abi.encode() for encoding the entire structure,
+which results in incorrect encoding of array members as specified in EIP-712.
+Listing 15. Excerpt from PWNSimpleLoanElasticChainlinkProposal
+164 function getProposalHash(Proposal calldata proposal) public view returns
+  (bytes32) {
+165 return _getProposalHash(PROPOSAL_TYPEHASH, abi.encode(proposal));
+166 }
+This issue was identified through a Wake manually-guided fuzzing campaign
+during the audit. For detailed information, refer to Appendix B.
+
+Recommendation
+Replace abi.encode() with concatenation of encoding of each member of the
+Proposal structure. Use keccak256(abi.encodePacked(array)) for array
+members.

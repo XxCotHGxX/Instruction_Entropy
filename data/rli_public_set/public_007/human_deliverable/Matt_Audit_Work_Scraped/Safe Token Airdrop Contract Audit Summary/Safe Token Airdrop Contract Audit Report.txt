@@ -1,0 +1,13 @@
+========================================================================
+Finding #1: The variable redeemDeadline can be set to the past  
+Severity : Medium  
+Description:  
+The `redeemDeadline` variable could be initialized with a past timestamp, rendering the airdrop useless by immediately making all claims invalid.
+
+Recommendation:  
+Add a check in the constructor to ensure the deadline is set to a future timestamp.
+
+Repository  
+URL: https://github.com/safe-global/safe-token  
+Commit: d997f13  
+========================================================================

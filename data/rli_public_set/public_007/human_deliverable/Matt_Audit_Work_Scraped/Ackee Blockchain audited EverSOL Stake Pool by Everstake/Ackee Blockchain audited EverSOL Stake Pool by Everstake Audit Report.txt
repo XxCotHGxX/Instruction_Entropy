@@ -1,0 +1,21 @@
+Repository URL: https://github.com/solana-labs/solana-program-library/tree/master/stake-pool
+Full commit hash: 43342a929872f2191634cfa0b355856aa1482a26
+========================================================================
+Findings Summary:
+==================
+6.2. Documentation and code mismatch.
+Impact: Informational Likelihood: N/A
+Target: instructions.rs Type: N/A
+Description
+In the documentation, there is an account for validator fee (see docs), but in
+the code, there is no such account (see instruction.rs and processor.rs).
+Recommendation
+Update RustDoc to match the code.
+=======================================================================
+6.3. TODOs in production code.
+Impact: Informational Likelihood: N/A
+Target: processor.rs Type: N/A
+Description
+TODO is forgotten in the processor.rs file (see comment).
+Recommendation
+Delete or address all TODOs. TODOs should not be in the production code.

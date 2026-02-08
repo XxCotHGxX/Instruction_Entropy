@@ -1,0 +1,64 @@
+========================================================================
+Finding #1: SWC-103 Floating pragma
+Severity : Low
+Description:
+The pragma version is not fixed, which can lead to compatibility issues in the future as newer compiler versions may change behaviour.
+
+Recommendation:
+Use a fixed pragma version (e.g., `pragma solidity 0.8.4;`) to ensure consistent compilation.
+
+Repository
+URL: https://github.com/1inch/fixed-rate-swap/commit/8e91763c81822a464a9ebef1a1d85fd7552fa3a2
+========================================================================
+
+========================================================================
+Finding #2: Code duplicity
+Severity : Low
+Description:
+Some functions share duplicated logic, which increases maintenance complexity and potential for bugs.
+
+Recommendation:
+Refactor the duplicated logic into internal helper functions for better maintainability.
+
+Repository
+URL: https://github.com/1inch/fixed-rate-swap/commit/8e91763c81822a464a9ebef1a1d85fd7552fa3a2
+========================================================================
+
+========================================================================
+Finding #3: Potential token decimals mismatch
+Severity : Medium
+Description:
+Assumes tokens have the same number of decimals, which might not always be the case and can lead to calculation inaccuracies.
+
+Recommendation:
+Ensure decimals are explicitly handled or compared between tokens.
+
+Repository
+URL: https://github.com/1inch/fixed-rate-swap/commit/8e91763c81822a464a9ebef1a1d85fd7552fa3a2
+========================================================================
+
+========================================================================
+Finding #4: Unhandled division by zero – Zero and negative inputAmount is not handled
+Severity : Medium
+Description:
+The contract does not properly validate that `inputAmount` is greater than zero, which may result in a division by zero error.
+
+Recommendation:
+Add input validation to ensure `inputAmount > 0` before proceeding with calculations.
+
+Repository
+URL: https://github.com/1inch/fixed-rate-swap/commit/8e91763c81822a464a9ebef1a1d85fd7552fa3a2
+========================================================================
+
+========================================================================
+Finding #5: Unauthorized withdrawal
+Severity : High
+Description:
+Improper access control allows unauthorized users to withdraw funds from the contract.
+
+Recommendation:
+Implement strict access control checks (e.g., onlyOwner or require statements) on all withdrawal functions.
+
+Repository
+URL: https://github.com/1inch/fixed-rate-swap/commit/invalidated-by-redesign
+========================================================================

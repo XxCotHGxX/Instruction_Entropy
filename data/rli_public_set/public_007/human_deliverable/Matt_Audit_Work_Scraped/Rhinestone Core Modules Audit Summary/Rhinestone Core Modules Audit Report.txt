@@ -1,0 +1,1078 @@
+Repository URL: https://github.com/rhinestone-labs/rhinestone-core-modules/commit/ccf1a4
+Full commit hash: ccf1a425ffeed3ef4a5ffabd962c8ab9db9c24f7
+========================================================================
+Findings Summary:
+==================
+H1: Removing from a wrong array of sigs in
+removeSigHook
+High severity issue
+Impact: High Likelihood: Medium
+Target: HookMultiPlexer.sol Type: Logic error
+Description
+Code duplications in the function removeSigHook resulted in a copy-paste
+error. The following code listing shows the whole removeSigHook function.
+Listing 1. Excerpt from HookMultiPlexer
+344 function removeSigHook(address hook, bytes4 sig, HookType hookType) external
+  {
+345 // cache the account
+346 address account = msg.sender;
+347 // check if the module is initialized and revert if it is not
+348 if (!isInitialized(account)) revert NotInitialized(account);
+349 
+350 // cache the storage config
+351 Config storage $config = $getConfig(account);
+352 
+353 if (hookType == HookType.SIG) {
+354 // get the length of the hooks for the same sig
+355 uint256 sigsHooksLength = $config.sigHooks[sig].length;
+356 // delete the hook
+357 $config.sigHooks[sig].popAddress(hook);
+358 
+359 // if there is only one hook for the sig, remove the sig
+360 if (sigsHooksLength == 1) {
+361 $config.targetSigs.popBytes4(sig);
+362 }
+363 } else if (hookType == HookType.TARGET_SIG) {
+364 // get the length of the hooks for the same sig
+365 uint256 targetSigsHooksLength = $config.targetSigHooks[sig].length;
+366 // delete the hook
+367 $config.targetSigHooks[sig].popAddress(hook);
+368 
+369 // if there is only one hook for the sig, remove the sig
+370 if (targetSigsHooksLength == 1) {
+371 $config.targetSigs.popBytes4(sig);
+372 }
+373 } else {
+374 revert UnsupportedHookType();
+375 }
+376 }
+When a user wants to remove his only hook for the given sig of hookType equal
+to SIG, then the sig is removed from the config array targetSigs (instead of
+sigs).
+This results in two situations. Firstly, if there is such a value present in
+targetSigs array, then it is removed. Thanks to this, the function getHooks
+does not return the right value. This error can even disable targetSigHooks
+entirely if a call type is of type CALLTYPE_BATCH and all targetSigHooks are
+added under the same sig, which was removed.
+Secondly, the value of the sig is still present in sigs array, which causes the
+function isInitialized to return true, even if all hooks are removed by calling
+the corresponding removal functions. However, this can be worked around by
+uninstalling the module completely.
+Exploit scenario
+Hooks of type TARGET_SIG can be disabled in the following scenario:
+1. One sigHook A and one targetSigHook B are added under the same sig S
+value using calls:
+◦ addSigHook(hook=A, sig=S, type=SIG)
+◦ addSigHook(hook=B, sig=S, type=TARGET_SIG)
+2. This stores the sig S to both arrays sigs and targetSigs as well as the
+hooks themselves to corresponding structures.
+3. The sigHook A is removed using the sig S value in function call:
+◦ removeSigHook(hook=A, sig=S, type=SIG).
+4. BUT due to the code bug, this removes an entry from targetSigs (therefore
+its length will be 0) instead of sigs.
+5. This disables the targetSigHook B in the function _getFromBatch, because
+there is a check targetSigs.length != 0;.
+6. The result is, that targetSigHook B will be disabled (will not be called at all)
+in all calls of calltype = CALLTYPE_BATCH, because in this case the hooks are
+invoked using the _getFromBatch function.
+Based on the responsibility of targetSigHook B this could lead to major
+consequences.
+Recommendation
+Change the first occurence of $config.targetSigs.popBytes4(sig); to
+$config.sigs.popBytes4(sig);.
+Fix 1.1
+The issue was removed during the refactoring of this module as proposed in
+finding I2.
+===========================================================================
+H2: Missing threshold checks
+High severity issue
+Impact: High Likelihood: Medium
+Target: MultiFactor.sol,
+OwnableValidator.sol,
+SocialRecovery.sol
+Type: Denial of service
+Description
+The project contains multiple ERC-7579 validators. Each of the following
+validators has a function to remove a single signer from the validator
+configuration:
+• MultiFactor.removeValidator,
+• OwnableValidator.removeOwner,
+• SocialRecovery.removeGuardian.
+None of the functions checks the currently configured threshold and the
+signers count. Because of this, it is possible to remove a signer so that the
+threshold will be greater than the signers count.
+Exploit scenario
+Owners of a smart account with the OwnableValidator validator with the 3/3
+scheme want to rotate one owner for another. They remove one of the
+owners. A new owner cannot be added because the threshold is set to 3, but
+there are only 2 owners left.
+Because OwnableValidator is the only validator configured for the smart
+account, the account becomes inaccessible.
+Recommendation
+Always check the threshold and the signers count before removing a signer
+and revert the transaction if the threshold is equal to the current signers
+count.
+Fix 1.1
+Fixed by adding the threshold checks to all aforementioned modules along
+with the logic needed to track the current signers count.
+===========================================================================
+H3: OwnableExecutor locked Ether
+High severity issue
+Impact: High Likelihood: Medium
+Target: OwnableExecutor.sol Type: Logic error
+Description
+The contract OwnableExecutor defines two functions to execute a single
+operation and a batch of operations on a smart account by an external
+approved entity. Both functions call executeFromExecutor on an ERC-7579
+smart account.
+Listing 2. Excerpt from OwnableExecutor
+140 function executeOnOwnedAccount(
+141 address ownedAccount,
+142 bytes calldata callData
+143 )
+144 external
+145 payable
+146 {
+147 // check if the sender is an owner
+148 if (!accountOwners[ownedAccount].contains(msg.sender)) {
+149 revert UnauthorizedAccess();
+150 }
+151 
+152 // execute the transaction on the owned account
+153
+  IERC7579Account(ownedAccount).executeFromExecutor(ModeLib.encodeSimpleSingle
+  (), callData);
+154 }
+155 
+156 /**
+157 * Executes a batch of transactions on the owned account
+158 *
+159 * @param ownedAccount address of the account to execute the transaction on
+160 * @param callData encoded data containing the transactions to execute
+161 */
+162 function executeBatchOnOwnedAccount(
+163 address ownedAccount,
+164 bytes calldata callData
+165 )
+166 external
+167 payable
+168 {
+169 // check if the sender is an owner
+170 if (!accountOwners[ownedAccount].contains(msg.sender)) {
+171 revert UnauthorizedAccess();
+172 }
+173 
+174 // execute the batch of transaction on the owned account
+175
+  IERC7579Account(ownedAccount).executeFromExecutor(ModeLib.encodeSimpleBatch(
+  ), callData);
+176 }
+All the functions executeOnOwnedAccount, executeBatchOnOwnedAccount, and
+executeFromExecutor are payable. However, the Ether sent to OwnableExecutor
+is not forwarded to the smart account.
+This finding was discovered using an automated static analysis detector in
+the Wake framework (see Appendix C).
+Exploit scenario
+A user wants to transfer additional Ether to a smart account and execute an
+operation through the OwnableExecutor module. The smart account already
+holds some Ether. Due to the issue in OwnableExecutor contract, the Ether sent
+with executeOnOwnedAccount or executeBatchOnOwnedAccount functions remains
+locked in the module. The module is not upgradeable, and so the Ether is lost.
+Recommendation
+Forward all the Ether sent in executeOnOwnedAccount and
+executeBatchOnOwnedAccount functions to the smart account.
+Fix 1.1
+Fixed by passing msg.value to external calls in both affected functions.
+===========================================================================
+H4: ERC-4337 restricted storage access
+High severity issue
+Impact: Medium Likelihood: High
+Target: MultiFactor.sol Type: Standards
+violation
+Description
+ERC-7562 defines a set of validation rules for execution of ERC-4337
+validation phase. The rules include restrictions on storage access.
+Particularly, storage access in other contracts than the smart account itself
+is only allowed to slots A and keccak256(A || x) + offset, where A represents
+the address of the smart account, x is any bytes32 value, offset is a number in
+between 0 and 128, and || represents concatenation.
+The validateUserOp function in the MultiFactor module is subject to these
+restrictions. For each smart account and each validator assigned to the smart
+account, there is a SubValidatorConfig entry.
+Listing 3. Excerpt from MultiFactor
+398 SubValidatorConfig storage $validator = $subValidatorData({
+399 account: account,
+400 iteration: iteration,
+401 subValidator: validatorAddress,
+402 id: id
+403 });
+404 
+405 // check if the subValidator data is empty and return false if it is
+406 bytes memory validatorStorageData = $validator.data;
+Listing 4. Excerpt from DataTypes
+15 struct SubValidatorConfig {
+16 bytes data;
+17 }
+Retrieval of $validator follows the limitations. However, the copy of
+$validator.data to memory triggers a sequence of storage slot reads that are
+not allowed by the ERC-4337 rules.
+The storage slot dedicated SubValidatorConfig.data is allowed to be
+accessed. The slot holds the data length and may contain the data itself if
+the length is small enough. If the data are longer, a new storage slot is
+computed as keccak256(P), where P is the number of the slot holding the
+length of the data. The new slot and subsequent slots are used to store the
+data. However, the ERC-4337 rules do not allow reading from these slots.
+This finding was discovered using an automated static analysis detector in
+the Wake framework (see Appendix C).
+Exploit scenario
+A smart account user installs the MultiFactor module as the only validator for
+a smart account.
+The user wants to perform other user operations on the smart account, but it
+is impossible because the MultiFactor module must be used to verify the user
+operations. User operation bundlers do not accept such user operations
+because the ERC-4337 rules are not satisfied, and bypassing the rules might
+lead to denial of service attacks.
+The smart account user is unable to perform any user operations on the
+smart account.
+Recommendation
+Store the data in a storage slot of form keccak256(A || x) + offset and
+restrict the data length to 32 * 128 = 4096 bytes (for offset in between 1 and
+128), with the length stored in the first slot with offset = 0. If the limit is too
+strict, consider splitting the data into smaller chunks and storing them with
+different x values used.
+Fix 1.1
+The data is now stored in bytes32[10] array, which prevents the restricted
+storage access but limits the data length to 320 bytes.
+===========================================================================
+H5: Nominee have limited access
+High severity issue
+Impact: Medium Likelihood: High
+Target: DeadManSwitch.sol Type: Denial of service
+Description
+The validator generates validation data that execution validity relies on the
+lastAccess timestamp and user-defined waitPeriod time and verifies the
+signature from the nominee address.
+Listing 5. Excerpt from DeadmanSwitch
+161 return _packValidationData({
+162 sigFailed: !sigValid,
+163 validAfter: _config.lastAccess + _config.timeout,
+164 validUntil: type(uint48).max
+165 });
+Before each execution, the hook updates the lastAccess timestamp in the
+_preCheck function.
+Listing 6. Excerpt from DeadmanSwitch
+103 function _preCheck(
+104 address account,
+105 address,
+106 uint256,
+107 bytes calldata
+108 )
+109 internal
+110 override
+111 returns (bytes memory hookData)
+112 {
+113 // if the module is not initialized, return and dont update the last
+  access time
+114 if (!isInitialized(account)) return "";
+115 
+116 // update the last access time
+117 DeadmanSwitchStorage storage _config = config[account];
+118 _config.lastAccess = uint48(block.timestamp);
+119 }
+But in the current implementation, even the if execution is from the nominee
+address, the lastAccess timestamp is updated.
+Exploit scenario
+1. After the owner of the smart account does not perform access for the
+waitPeriod time, the nominee address tries to access the smart account.
+2. But after one successful transaction, the nominee address needs to wait
+for waitPeriod time again.
+Recommendation
+Ensure that the first nominee’s operation does not block future operations
+and the lastAccess timestamp is not updated. Or propose another solution
+that ensures the full recovery of the smart account in one transaction.
+Fix 1.1
+The issue was fixed by adding a line resetting the timeout to the
+DeadmanSwitch.validateUserOp function:
+uint48 validAfter = _config.lastAccess + _config.timeout;
+config[userOp.sender].timeout = 0;
+===========================================================================
+H6: Externally increasable borrower’s nonce
+High severity issue
+Impact: Medium Likelihood: High
+Target: ColdStorageFlashloan.sol,
+FlashLoanLender.sol
+Type: Denial of service
+Description
+An arbitrary borrower’s nonce can be increased by a malicious actor. The
+FlashloanCallback.onFlashLoan function is protected by the
+onlyAllowedCallbackSender modifier however, this modifier can be bypassed to
+increase the borrower’s nonce.
+Listing 7. Excerpt from FlashloanCallback
+106 address borrower,
+107 address, /*token*/
+108 uint256, /*amount*/
+109 uint256, /*fee*/
+110 bytes calldata data
+111 )
+112 external
+113 onlyAllowedCallbackSender
+114 returns (bytes32)
+115 {
+116 // decode the data
+117 (FlashLoanType flashLoanType, bytes memory signature, Execution[] memory
+  executions) =
+118 abi.decode(data, (FlashLoanType, bytes, Execution[]));
+119 // get the hash
+120 bytes32 hash = getTokengatedTxHash(flashLoanType, executions,
+  nonce[borrower]);
+121 // increment the nonce
+122 nonce[borrower]++;
+123 // format the hash
+The modifier onlyAllowedCallbackSender calls the virtual function
+FlashloanCallback._isAllowedCallbackSender and checks the result. This
+function is overridden in the ColdStorageFlashloan contract. It checks the
+whitelist of msg.sender however, an arbitrary whitelist can be created using
+unprotected external functions onInstall and addAddress.
+Listing 8. Excerpt from ColdStorageFlashloan
+109 function _isAllowedCallbackSender() internal view virtual override returns
+  (bool) {
+110 address caller = _msgSender();
+111 return whitelist[msg.sender].contains(caller);
+112 }
+The _msgSender function is just checking the last 20 bytes of calldata which
+can be arbitrary.
+Listing 9. Excerpt from ERC7579FallbackBase
+18 function _msgSender() internal pure returns (address sender) {
+19 // The assembly code is more direct than the Solidity version using
+  `abi.decode`.
+20 /* solhint-disable no-inline-assembly */
+21 /// @solidity memory-safe-assembly
+22 assembly {
+23 sender := shr(96, calldataload(sub(calldatasize(), 20)))
+24 }
+25 /* solhint-enable no-inline-assembly */
+26 }
+Therefore the onFlashLoan function is executable from malicious contracts
+and can increment nonce of arbitrary borrower account passed to onFlashLoan
+function.
+Exploit scenario
+1. The attacker creates a contract that implements IERC1271 and bypasses
+the isValidSignature by returning bytes4(0x1626ba7e).
+2. The contract calls ColdStorageFlashloan.addAddress to add the target
+borrower’s address to the whitelist.
+3. The contract creates malicious calldata for onFlashLoan call and call the
+function.
+4. The borrower’s nonce is incremented, which invalidates the borrower’s
+flashloan transaction.
+5. Also, the _execute function performs an external call to msg.sender
+(malicious contract) which can be potentially misused for various actions.
+Recommendation
+Attach the nonce to the lender-borrower pair to avoid nonce incrementation
+by malicious actors.
+mapping(address lender => mapping(address borrower => uint256 nonces)) public
+nonce;
+Fix 1.1
+The finding was fixed by using two-dimensional mapping for nonce.
+mapping(address account => mapping(address borrower => uint256 nonces)) public
+nonce;
+The nonce now depends on the account and borrower pair.
+===========================================================================
+H7: ERC-3156 flashloans implementation
+High severity issue
+Impact: High Likelihood: Medium
+Target: FlashloanLender.sol,
+FlashloanCallback.sol
+Type: Code quality
+Description
+ERC-3156 flashloans implementation does not follow the reference
+implementation and best practices to avoid security threats. According to
+ERC-3156 we identified the following violations:
+Lender
+• The function FlashloanLender.flashLoan performs only the transfer from
+the lender to the borrower, but missing the transfer from the borrower
+back to the lender (amount + fee) and relies on the borrower to perform
+this operation. ERC-3156 specs define this approach as a must.
+• The function FlashloanLender.flashLoan is missing the reentrancy
+protection.
+• The flashFee function must revert for unsupported tokens. (Never reverts
+in ColdStorageHook).
+• The maxFlashLoan must return the maximum possible loan for the token or 0
+for the unsupported token. (Returns always 0 in ColdStorageHook).
+Receiver
+• The FlashloanCallback does not implement IERC3156FlashBorrower
+interface, although onFlashLoan function is present.
+Exploit scenario
+Violating the ERC-3156 specification and best practices opens many back
+doors for balance manipulations, draining funds using reentrancy or weak
+access controls (in combination with the H6: Externally increasable
+borrower’s nonce which allows bypassing the borrower’s whitelist). During the
+limited time, we did not find any specific exploit scenario however, the
+violations above are critical and can lead to severe security threats.
+Recommendation
+Strictly follow all "MUST" assumptions in the ERC-3156 specification to avoid
+security threats. Also, add reentrancy protection to the flashLoan function
+(even the both parties are trusted), since the ERC-3156 by design cannot
+follow the Check Effects Interaction pattern.
+Fix 1.1
+Fixed. The function _transferTokenBack is implemented and used in
+FlashloanLender.flashLoan function, which is now protected using the
+nonReentrant modifier.
+The function ColdStorageHook.maxFlashLoan now returns
+token.balanceOf(msg.sender). The function ColdStorageHook.flashFee always
+reverts with the UnsupportedToken error. The function
+ColdStorageHook.flashFeeToken returns address(0).
+===========================================================================
+M1: Missing sqrtPriceLimitX96 check
+Medium severity issue
+Impact: High Likelihood: Low
+Target: ScheduledOrders.sol Type: Data validation
+Description
+The module ScheduledOrders serves as an ERC-7579 executor for swapping
+tokens through Uniswap V3.
+However, the contract does not validate the sqrtPriceLimitX96 parameter
+value. Setting the parameter to zero skips slippage protection in Uniswap.
+Exploit scenario
+A user installs the ScheduledOrders module and sets sqrtPriceLimitX96
+parameter to zero. The function executeOrder executing the swap is then
+called automatically by an off-chain tool. Due to the missing slippage
+protection, the automated call may perform a highly unfavorable swap for
+the user.
+Recommendation
+Check if sqrtPriceLimitX96 parameter equals zero and revert in such case.
+Fix 1.1
+The issue was fixed by adding the revert condition.
+if (sqrtPriceLimitX96 == 0) revert InvalidSqrtPriceLimitX96();
+===========================================================================
+M2: Removing different address
+Medium severity issue
+Impact: Low Likelihood: High
+Target: ColdStorageFlashloan.sol Type: Logic error
+Description
+The order of arguments is swapped against the SentinelList.pop function.
+Snippet from the ColdStorageFlashLoan.removeAddress function:
+Listing 10. Excerpt from ColdStorageFlashloan
+85 function removeAddress(address addressToRemove, address prevAddress) external
+  {
+86 // remove the address from the whitelist
+87 whitelist[msg.sender].pop(addressToRemove, prevAddress);
+88 }
+Snippet from the SentinelList.pop function.
+function pop(SentinelList storage self, address prevEntry, address popEntry)
+Exploit scenario
+The arguments are swapped, therefore transactions fail in general. If the
+transaction succeeds, the unexpected address is removed and the
+unexpected address remains in the list.
+Recommendation
+Change the order of the removeAddress function arguments.
+function removeAddress(address addressToRemove, address prevAddress) external {// remove the address from the whitelist
+  whitelist[msg.sender].pop(prevAddress, addressToRemove);
+}
+Fix 1.1
+The order of arguments in the removeAddress function was fixed.
+whitelist[msg.sender].pop({ prevEntry: prevAddress, popEntry: addressToRemove
+});
+===========================================================================
+M3: Missing module type condition
+Medium severity issue
+Impact: Low Likelihood: High
+Target: ColdStorageHook.sol Type: Configuration
+Description
+The ColdStorageHook module is used as an executor but the isModuleType
+function does not return true for TYPE_EXECUTOR.
+Listing 11. Excerpt from ColdStorageHook
+589 function isModuleType(uint256 typeID) external pure virtual returns (bool) {
+590 if (typeID == TYPE_HOOK || typeID == TYPE_FALLBACK) {
+591 return true;
+592 }
+593 }
+Exploit scenario
+The user wants to use the ColdStorageHook module as an executor but it is not
+possible in the current setup.
+Recommendation
+Add the TYPE_EXECUTOR constant into the condition in the isModuleType
+function.
+function isModuleType(uint256 typeID) external pure virtual returns (bool) {
+  if (typeID == TYPE_EXECUTOR || typeID == TYPE_HOOK || typeID ==
+TYPE_FALLBACK) {
+  return true;
+  }
+}
+Fix 1.1
+The constant TYPE_EXECUTOR was added to the condition in the isModuleType
+function.
+===========================================================================
+L1: HookMultiPlexer with no hooks
+Low severity issue
+Impact: Low Likelihood: Medium
+Target: HookMultiPlexer.sol Type: Logic error
+Description
+The function isInitialized in HookMultiPlexer module checks if the module is
+initialized based on array lengths.
+Listing 12. Excerpt from HookMultiPlexer
+195 function isInitialized(address smartAccount) public view returns (bool) {
+196 // cache the storage config
+197 Config storage $config = $getConfig(smartAccount);
+198 // if any hooks are set, the module is initialized
+199 return $config.globalHooks.length != 0 ||
+  $config.delegatecallHooks.length != 0
+200 || $config.valueHooks.length != 0 || $config.sigs.length != 0
+201 || $config.targetSigs.length != 0;
+202 }
+Installation of the module with no hooks or removal of the last hook leaves
+the module uninitialized, and addHook function would revert.
+Listing 13. Excerpt from HookMultiPlexer
+252 function addHook(address hook, HookType hookType) external {
+253 // cache the account
+254 address account = msg.sender;
+255 // check if the module is initialized and revert if it is not
+256 if (!isInitialized(account)) revert NotInitialized(account);
+Exploit scenario
+1. The HookMultiPlexer module is installed with no hooks on a smart account
+or the last hook is removed from the module by calling the removeHook
+function.
+2. The addHook function is called to install a new hook.
+3. The function reverts because the module is not considered initialized.
+4. The user is forced to reinstall the module with at least one hook.
+Recommendation
+Use an extra boolean variable to track the initialization state of the module.
+bool private initialized;
+...
+function isInitialized(address smartAccount) public view returns (bool) {
+  return initialized;
+}
+Fix 1.1
+Fixed by adding an extra boolean variable initialized to the storage tracking
+the initialization state of the module.
+===========================================================================
+L2: flashLoan front-run
+Low severity issue
+Impact: Low Likelihood: Low
+Target: FlashloanCallback.sol,
+FlashloanLender.sol
+Type: Front-running
+Description
+Although unlikely, the function flashLoan may be front-run with different
+token and value parameters.
+Listing 14. Excerpt from FlashloanLender
+95 function flashLoan(
+96 IERC3156FlashBorrower receiver,
+97 address token,
+98 uint256 value,
+99 bytes calldata data
+100 )
+Listing 15. Excerpt from FlashloanCallback
+105 function onFlashLoan(
+106 address borrower,
+107 address, /*token*/
+108 uint256, /*amount*/
+109 uint256, /*fee*/
+110 bytes calldata data
+111 )
+The signature being validated is stored in data. The signed data do not include
+the token and value parameters. Given this, anyone can front-run the
+flashLoan function execution with different token and value parameters under
+the condition that the contract that performs the execution already has
+enough tokens used in the execution.
+Exploit scenario
+An attacker is observing the transactions pool and tries to front-run
+flashLoan executions with different token and value parameters. If the front run succeeds, the execution is performed in an unexpected way and the
+legitimate transaction does not succeed because of a nonce used in the
+signature.
+Recommendation
+Make the signature depend on the token and value parameters.
+Fix 1.1
+Fixed by making the signature depend on the token and value parameters.
+===========================================================================
+L3: Unsafe ERC-20 calls
+Low severity issue
+Impact: Medium Likelihood: Low
+Target: AutoSavings.sol,
+FlashloanLender.sol,
+ScheduledTransfers.sol,
+Uniswap.sol
+Type: Standards
+violation
+Description
+The project contains multiple modules interacting with ERC-20 tokens, but
+none of them uses SafeERC20 or its alternative. As a consequence, the
+executed transactions may not revert (even though they should) or may
+revert (even though they should not).
+Exploit scenario
+Specifically, the following situations may occur:
+1. The AutoSavings contract calls approve function through
+UniswapV3Integration contract or directly from the contract itself. The
+approve function may revert if the allowance is not reset to zero first.
+2. The FlashloanLender contract calls transfer function, which may return
+false and not revert.
+3. The ScheduledTransfers contract calls transfer function, which may return
+false and not revert, counting the execution as successful.
+Recommendation
+Use SafeERC20 library or its alternative when interacting with ERC-20 tokens.
+Fix 1.1
+All of the described scenarios were fixed by resetting the allowance to zero
+before calling the approve function and checking the optional return value of
+the transfer and transferFrom functions.
+===========================================================================
+L4: Missing initialized check in SentinelList
+Low severity issue
+Impact: Medium Likelihood: Low
+Target: SentinelList.sol,
+SentinelListBytes32.sol,
+SentinelList4337.sol
+Type: Logic error
+Description
+When using the push function, it does not check whether the list has been
+initialized. Therefore, it is possible to use push function, but this data will be
+lost because the list was not properly initialized beforehand.
+function push(SentinelList storage self, address newEntry) internal {
+  if (newEntry == ZERO_ADDRESS || newEntry == SENTINEL) {
+  revert LinkedList_InvalidEntry(newEntry);
+  }
+  if (self.entries[newEntry] != ZERO_ADDRESS) revert
+LinkedList_EntryAlreadyInList(newEntry);
+  self.entries[newEntry] = self.entries[SENTINEL];
+  self.entries[SENTINEL] = newEntry;
+}
+Exploit scenario
+1. The user using a module that has multiple module types, and the user
+wants to reinstall the module.
+2. The user calls onUninstall function.
+3. The user calls addAddress function which just does push to the list, before
+onInstall call.
+4. The transaction succeeds and the list state is initialized but this element
+does not exist in the list.
+Recommendation
+Check entries[SENTINEL] value is ZERO_ADDRESS or not.
+Fix 1.1
+The finding was fixed by adding the safePush function. The safePush function
+checks whether the list has been initialized and if not, it initializes the list and
+inserts the element. It is recommended to use the push function only if it is
+confirmed the list is initialized.
+===========================================================================
+L5: Missing deletion of execution element
+Low severity issue
+Impact: Low Likelihood: Medium
+Target: ColdStorageHook.sol Type: Logic error
+Description
+Previously requested executions with timestamps exceeding the
+executeAfter function remain callable even after one execution and even
+after reinstalling the module.
+Listing 16. Excerpt from ColdStorageHook
+448 // get the execution hash
+449 bytes32 executionHash = _execDigest(target, value, callData);
+450 
+451 // check the timelocked execution
+452 _checkTimelockedExecution(account, executionHash);
+453 
+454 // emit the TimelockExecuted event
+455 emit TimelockExecuted(account, executionHash);
+456 
+457 return "";
+It emits the TimelockExecuted event but the execution is not removed from
+the executions mapping.
+Exploit scenario
+The user can call the same target with the same amount and same callData
+repeatedly after the timestamp exceeds executeAfter.
+If the user reinstalls the ColdStorageHook module, he can execute the
+execution without requesting, because the subAccount’s entry in executions
+mapping is not cleared in onUnistall function.
+Recommendation
+Remove the execution from executions mapping in the onExecuteFromExecutor
+function.
+Delete all executions for subAccount from executions mapping in the
+onUninstall function.
+Fix 1.1
+The finding was fixed by removing the execution hash for each execution and
+all execution hashes are removed when uninstalling the module.
+===========================================================================
+L6: Excluding list element
+Low severity issue
+Impact: Low Likelihood: Medium
+Target: SentinelListBytes32.sol Type: Logic error
+Description
+In the getEntriesPaginated function, the starting element should be contained
+in the list and should not revert when start is contained in the list.
+if (start != SENTINEL && contains(self, start)) revert
+LinkedList_InvalidEntry(start);
+Exploit scenario
+If the start is not SENTINEL but rather an element contained in the list, it does
+not return an array of elements.
+Recommendation
+Fix the code to verify the existence of the start element.
+if (start != SENTINEL && !contains(self, start)) revert
+LinkedList_InvalidEntry(start);
+Fix 1.1
+The finding was fixed by inverting the condition.
+===========================================================================
+W1: TODOs in module HookMultiPlexer
+Impact: Warning Likelihood: N/A
+Target: HookMultiPlexer.sol Type: Code quality
+Description
+The HookMultiPlexer module contains two TODOs. These indicate areas
+requiring further attention and development and can be a hint for hackers in
+rare cases.
+The following code snippets reveal their location.
+Listing 17. Excerpt from HookMultiPlexer
+407 // TODO: write tests for this. I think this breaks if globalHooks is empty
+408 // get the global and account sig hooks
+409 address[] memory hooks = $config.globalHooks;
+Listing 18. Excerpt from HookMultiPlexer
+479 // todo: optimise
+480 assembly ("memory-safe") {
+481 let dataPointer := add(hookData.offset, calldataload(hookData.offset))
+482 hooksAndContexts.offset := add(dataPointer, 0x20)
+483 hooksAndContexts.length := calldataload(dataPointer)
+484 }
+Recommendation
+It is recommended to address these TODOs to ensure code completeness and
+maintainability.
+Fix 1.1
+The implementation contains no more TODOs. This module was refactored as
+proposed in finding I2.
+===========================================================================
+W2: MultiFactor duplicate validators
+Impact: Warning Likelihood: N/A
+Target: MultiFactor.sol Type: Data validation
+Description
+The function onInstall in the MultiFactor module accepts an array of initial
+validators. The function does not check if there are any duplicate pairs
+(address validatorAddress, ValidatorId id).
+Recommendation
+Consider checking if a given pair of validatorAddress and id parameters
+already was initialized and revert in this case.
+Acknowledgment 1.1
+This is a feature - validators should be able to be re-used.
+===========================================================================
+W3: Missing clearTrustedForwarder call
+Impact: Warning Likelihood: N/A
+Target: RegistryHook.sol Type: Logic error
+Description
+Unlike other hooks, the RegistryHook module is missing the
+clearTrustedForwarder call in the onUninstall function.
+Recommendation
+Call the clearTrustedForwarder function in the RegistryHook.onUninstall
+function.
+Fix 1.1
+Fixed. The clearTrustedForwarder call was added to the
+RegistryHook.onUninstall function.
+===========================================================================
+W4: SchedulingBase executions count validation
+Impact: Warning Likelihood: N/A
+Target: SchedulingBase.sol Type: Data validation
+Description
+The SchedulingBase contract is used by two executors to schedule
+executions on a smart account. However, the contract does not check that
+numberOfExecutions parameter is greater than zero.
+Recommendation
+Check the numberOfExecutions parameter and revert if it equals zero.
+Fix 1.1
+Fixed by adding an extra check that the numberOfExecutions parameter is not
+equal to zero when creating a new execution.
+===========================================================================
+W5: Missing zero address check
+Impact: Warning Likelihood: N/A
+Target: OwnableExecutor.sol Type: Data validation
+Description
+In the OwnableExecutor contract the onInstall function missing the owner zero address validation. Other accountOwners related functions check zero-address
+and revert with InvalidOwner
+Recommendation
+Add the zero-address check for the owner address into the onInstall
+function.
+Fix 1.1
+The finding was fixed by adding the owner zero-address check.
+===========================================================================
+W6: Missing value check in ERC-20 transfers
+Impact: Warning Likelihood: N/A
+Target: ColdStorageHook.sol Type: Logic error
+Description
+Users can request execution that sending ERC-20 or EIP-712 with the native
+token value. Usually, the transfer or transferFrom functions are not payable
+and the transaction would revert. However, in case transfer functions are
+payable, the native token would be transferred to the token contract.
+Recommendation
+Check the native token value is zero when it was requested for transfer or
+transferFrom execution.
+Fix 1.1
+Fixed by checking the value is zero when calldata length is not zero at
+requestTimelockedExecution function.
+===========================================================================
+W7: Missing array length validation
+Impact: Warning Likelihood: N/A
+Target: AutoSavings.sol Type: Data validation
+Description
+The AutoSavings.onInstall function is missing array length mismatch
+validation.
+Recommendation
+Add an array length mismatch validation.
+if (_tokens.length != _configs.length) revert TokenConfigLengthMismatch();
+Fix 1.1
+Fixed. The issue was fixed by creating the ConfigWithToken struct with the
+token address and changing the init data to ConfigWithToken[].
+===========================================================================
+I1: Redundant assignments in SentinelList
+Impact: Info Likelihood: N/A
+Target: SentinelList.sol,
+SentinelListBytes32.sol,
+SentinelList4337.sol
+Type: Code quality
+Description
+Libraries SentinelList and its variants contain redundant assignments.
+In the function popAll, in the following code snippet, the last line is excessive.
+function popAll(SentinelList storage self) internal {
+  address next = self.entries[SENTINEL];
+  while (next != ZERO_ADDRESS) {
+  address current = next;
+  next = self.entries[next];
+  self.entries[current] = ZERO_ADDRESS;
+  }
+  self.entries[SENTINEL] = ZERO_ADDRESS;
+}
+The assignment self.entries[SENTINEL] = ZERO_ADDRESS is redundant, because
+self.entries[SENTINEL] is either:
+1. already equal to ZERO_ADDRESS if the sentinel list is uninitialized, then the
+while loop is skipped.
+2. not equal to ZERO_ADDRESS, so it goes into the while loop, where:
+◦ it’s immediately set to ZERO_ADDRESS if the sentinel list is empty because
+SENTINEL points to SENTINEL.
+◦ or it’s set to ZERO_ADDRESS in the last transit through the while loop
+because the last entry of the sentinel list points to SENTINEL.
+Recommendation
+Remove the unnecessary assignments to make the libraries cleaner.
+Fix 1.1
+The redundant assignments were removed. Also, documentation comments
+were added for all methods in the library SentinelList and its variants.
+===========================================================================
+I2: Proposal for refactoring HookMultiPlexer
+Impact: Info Likelihood: N/A
+Target: HookMultiPlexer.sol Type: Code quality
+Description
+In the module HookMultiPlexer are many if and else statements regarding the
+hook types, only to work with the right variable. For example in functions
+addHook, addSigHook, removeHook or removeSigHook.
+Nested mapping similar to:
+// sig => hook type => hooks
+mapping(bytes4 => mapping(HookType => address[])) hooks;
+would solve this handling and would make the code much more concise,
+readable and maintainable.
+There are also a lot of code duplications along the module. The longest one
+has 26 lines (comments including) in the onInstall function - lines 98 to 123
+and lines 125 to 150. Other code duplications are in functions onUninstall,
+getHooks, addSigHook or in function removeSigHook which even resulted in issue
+===========================================================================
+H1: Removing from a wrong array of sigs in removeSigHook.
+Recommendation
+Consider refactoring the HookMultiPlexer module.
+Fix 1.1
+The whole class was refactorized using mapping inspired by the proposal.
+That led to a decrease in the line count of implementation by about half.
+===========================================================================
+I3: AutoSavings percentage precision
+Impact: Info Likelihood: N/A
+Target: AutoSavings.sol Type: Arithmetics
+Description
+The AutoSavings module allows for saving a given percentage of received
+tokens. The following function is used to calculate the amount of tokens to
+save.
+Listing 19. Excerpt from AutoSavings
+194 function calcDepositAmount(
+195 uint256 amountReceived,
+196 uint256 percentage
+197 )
+198 public
+199 pure
+200 returns (uint256)
+201 {
+202 // calculate the amount to be saved which is the
+203 // percentage of the amount received
+204 return (amountReceived * percentage) / 100;
+205 }
+The current resolution is 1%, i.e. the minimal percentage to save is 1%.
+Recommendation
+Consider increasing the precision with at least two decimal places.
+Fix 1.1
+Fixed. The percentage resolution was increased to 2 decimal places and the
+PRBMath library is now used for fixed-point math.
+===========================================================================
+I4: Unused code
+Impact: Info Likelihood: N/A
+Target: **/* Type: Code quality
+Description
+The project contains multiple occurrences of unused code. See Appendix C
+for the full list.
+Unused functions were not reported due to the nature of the project being a
+base kit for other smart account modules.
+Recommendation
+Remove the unused code to improve the readability and maintainability of the
+codebase.
+Fix 1.1
+All of the unused code occurrences were fixed.
+===========================================================================
+I5: Typos and incorrect documentation
+Impact: Info Likelihood: N/A
+Target: **/* Type: Code quality
+Description
+There are several typos and documentation issues across the project.
+• Multiple projects define an error named UnsopportedOperation.
+• The file named HookMultiPlexer.sol contains the contract named
+HookMultiplexer.
+• SocialRecovery.isValidSignatureWithSender uses copy-pasted
+documentation string from DeadmanSwitch.
+• ColdStorageHook.requestTimelockedModuleConfig function documentation is
+copy-pasted from function requestTimelockedExecution and does not
+describe the actual requestTimelockedModuleConfig behavior.
+• ColdStorageHook.onExecuteFromExecutor documentation mentions that the
+function reverts but it’s not.
+• The SentinelList.sol file contains the SentinelListLib library.
+• The SentinelList4337.sol file contains the SentinelList4337Lib library.
+• The SentinelListBytes32Lib.sol file contains LinkedBytes32Lib library.
+• The SentinelList is missing NatSpec documentation.
+• The file CheckNSignatures.sol contains the CheckSignatures contract.
+• The CheckNSignatures is missing NatSpec documentation.
+Recommendation
+Fix the typos and documentation to improve code quality.
+Fix 1.1
+Most of the recommendations were applied, the rest was acknowledged.
+===========================================================================
+I6: Missing function restriction
+Impact: Info Likelihood: N/A
+Target: SocialRecovery.sol Type: Code quality
+Description
+The validateUserOp function is not a virtual function and the function can be
+restricted to view.
+Listing 20. Excerpt from SocialRecovery
+226 function validateUserOp(
+227 PackedUserOperation calldata userOp,
+228 bytes32 userOpHash
+229 )
+230 external
+231 override
+232 returns (ValidationData)
+Recommendation
+Consider restricting the function to view.
+Fix 1.1
+The finding was fixed by restricting the function to view.
+===========================================================================
+I7: Unused variable
+Impact: Info Likelihood: N/A
+Target: ColdStorageHook.sol Type: Code quality
+Description
+The success variable in the ColdStorageHook.checkHash function is not used.
+Listing 21. Excerpt from ColdStorageHook
+146 function checkHash(
+147 address account,
+148 bytes32 hash
+149 )
+150 external
+151 view
+152 returns (bytes32 executeAfter)
+153 {
+154 // get the executeAfter timestamp
+155 bool success;
+156 (success, executeAfter) = executions[account].tryGet(hash);
+157 }
+Recommendation
+Remove the success variable.
+(, executeAfter) = executions[account].tryGet(hash);
+Fix 1.1
+Fixed. The success variable was removed.
+===========================================================================
+I8: Internal functions missing prefix
+Impact: Info Likelihood: N/A
+Target: ERC7579HookDestruct.sol Type: Standards
+violation
+Description
+Internal functions in the ERC7579HookDestruct contract are not prefixed with
+an underscore. Namely onExecute, onExecuteBatch, onExecuteFromExecutor,
+onExecuteBatchFromExecutor, onInstallModule, onUninstallModule,
+onUnknownFunction, and onPostCheck.
+Recommendation
+Add an underscore prefix to internal function names according to Solidity
+best practices.
+Acknowledgment 1.1
+Would break existing modules from external developers.
+===========================================================================
+I9: Missing events
+Impact: Info Likelihood: N/A
+Target: **/* Type: Logging
+Description
+Most of the modules are missing events emits in state changing functions.
+• All - onInstall, onUninstall
+• AutoSavings - setConfig, deleteConfig
+• ColdStorageFlashloan - addAddress, removeAddress
+• ColdStorageHook - setWaitPeriod
+• HookMultiplexer - addHook, addSigHook, removeHook, removeSigHook
+• MultiFactor - setThreshold
+• OwnableExecutor, OwnableValidator - addOwner, removeOwner
+• SocialRecovery - setThreshold, addGuardian, removeGuardian
+Recommendation
+It is a good practice to emit events after every important state change.
+Fix 1.1
+Fixed. Event emits for important state changes are added.
+===========================================================================
+M4: Missing precision in price ratio decimals
+Medium severity issue
+Impact: Low Likelihood: High
+Target: UniswapIntegration.sol Type: Arithmetics
+Description
+The price ratio should have decimals to prevent the ratio from losing
+precision. So, the price ratio should have a decimal for the calculation.
+Otherwise, the value of the ratio could be rounded down and it will be 0.
+Listing 22. Excerpt from UniswapIntegration
+144 uint256 decodedSqrtPrice = sqrtPriceX96 / (2 ** 96);
+145 priceRatio = decodedSqrtPrice * decodedSqrtPrice;
+146 return priceRatio;
+Exploit scenario
+The priceRatioToPrice function will return the price based on the ratio. When
+the ratio is less than 1, the price will be 0. Which causes the error in the future
+calculation.
+Also if the ratio is 1.5 then, the return value will be 1 because of the rounding
+down.
+Recommendation
+The usage of the calculated value would depend on the module, so it would
+be better to have a calculation for each module.
+In case it is necessary to the ratio of tokens, do not use the priceRatio value
+for the calculation of trading. Instead, use the sqrtPriceX96 for trading
+calculations to prevent loss of precision.
+Or, use precision for the ratio value, for example, using 10**18 precision for
+the price ratio to return the ratio. To calculate accurately without overflow, it
+is recommanded to use the uniswap library FullMath, which does not support
+the 0.8.0 version, so migration is required.
+The unused view functions sqrtPriceX96toPriceRatio,
+priceRatioToSqrtPriceX96, and priceRatioToPrice are moved to the test
+directory.
+===========================================================================
+W8: Missing deinitalization for swap router when
+uninstalling
+Impact: Warning Likelihood: N/A
+Target: ScheduledOrders.sol Type: Logic error
+Description
+Missing the _deinitSwapRouter() function call in the onUninstall function
+which reset the swap router setting.
+Recommendation
+Add the _deinitSwapRouter() function call in the onUninstall function.
+The _deinitSwapRouter() function call is added in the onUninstall function.
+===========================================================================
+W9: Uniswap is not deployed on some chains
+Impact: Warning Likelihood: N/A
+Target: UniswapIntegration.sol Type: Configuration
+Description
+Uniswap for the swapping tokens is not deployed on some chains. The module
+requires the user to input the swap router address.
+Recommendation
+Be aware that Uniswap for the swapping tokens is not deployed for those
+chains. Make sure not to deploy the module for those chains or implement
+functionality that completes the operation without using swapping tokens.
+The issue was acknowledged by the client.
+===========================================================================
+W10: Contract naming
+Impact: Warning Likelihood: N/A
+Target: UniswapIntegration.sol Type: Code quality
+Description
+The file UniswapIntegration.sol contains contract
+InitializableUniswapV3Integration. Inconsinstent contract naming decreases
+the code clarity and can lead to overlooked errors.
+Listing 23. Excerpt from UniswapIntegration
+15 abstract contract InitializableUniswapV3Integration {
+Recommendation
+Unify the contract and file naming.
+The issue was acknowledged by the client.

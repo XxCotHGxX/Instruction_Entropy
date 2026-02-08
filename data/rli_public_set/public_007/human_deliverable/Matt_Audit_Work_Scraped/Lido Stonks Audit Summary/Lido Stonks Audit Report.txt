@@ -1,0 +1,306 @@
+Repository URL:   https://github.com/lidofinance/stonks/blob/edf39c7c61d3dd09305e85b7681c4a45525a536a/contracts/Stonks.sol
+Full commit hash: 40af0bb3ede47b7666d402280b96f05e6c897546
+========================================================================
+Findings Summary:
+==================
+M1: SafeERC20 not used for approve
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: Order Type: Non-standard
+token
+interactions
+Description
+The contract Order has to give approval to the CoW Swap relayer contract for
+the future trade to succeed.
+Listing 1. Excerpt from Order
+121 IERC20(tokenFrom).approve(RELAYER, type(uint256).max);
+The standard IERC20 interface is used for the approval call. The interface
+expects a boolean value returned. However, some tokens (including USDT, for
+example) do not return any value, resulting in the transaction failing because
+of an ABI decoding error.
+This issue was found by a fuzz test written in the Wake testing framework.
+See Appendix C for more details.
+Exploit scenario
+The project is deployed, and an Order contract instance is created to sell
+USDT tokens. Due to the unsafe variant of the approve call, the transaction
+fails.
+Recommendation
+Use OpenZeppelin’s forceApprove function from the SafeERC20 library to give
+approval to the relayer contract.
+Fix 1.1
+Fixed, ERC20.approve has been replaced by SafeERC20.forceApprove.
+Listing 2. Excerpt from Order
+121 IERC20(tokenFrom).forceApprove(RELAYER, type(uint256).max);
+===========================================================================
+W1: MIN_POSSIBLE_BALANCE inadequate logic
+Impact: Warning Likelihood: N/A
+Target: Order, Stonks Type: Code quality
+Description
+The project contains two constants named MIN_POSSIBLE_BALANCE with the
+same values used similarly.
+Listing 3. Excerpt from Order.recoverTokenFrom
+206 if (balance <= MIN_POSSIBLE_BALANCE) revert
+  InvalidAmountToRecover(balance);
+Listing 4. Excerpt from Stonks.placeOrder
+133 if (balance <= MIN_POSSIBLE_BALANCE) revert
+  MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, balance);
+The name implies the constants hold the minimum value that must be used as
+a balance for a transaction to succeed. This is further supported by the name
+of the error MinimumPossibleBalanceNotMet in the above example. However, the
+logic in both cases uses MIN_POSSIBLE_BALANCE as the highest value that
+causes the transaction to fail.
+This issue was found by a fuzz test written in the Wake testing framework.
+See Appendix C for more details.
+Recommendation
+Change the equation sign from <= to < to make the behavior more intuitive
+based on the name of the constants. If necessary, also update the value of
+both constants.
+Fix 1.1
+Fixed, the operator has been changed to < according to our recommendation.
+Listing 5. Excerpt from Order.recoverTokenFrom
+206 if (balance < MIN_POSSIBLE_BALANCE) revert
+  InvalidAmountToRecover(balance);
+Listing 6. Excerpt from Stonks.placeOrder
+131 if (balance < MIN_POSSIBLE_BALANCE) revert
+  MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, balance);
+===========================================================================
+W2: Chainlink feed registry mainnet-only
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Chain
+differences
+Description
+The project heavily depends on the Chainlink Feed Registry. According to the
+documentation, the registry contract is only deployed on the Ethereum
+mainnet. This is a limiting factor for deployment of this project to other
+chains.
+Recommendation
+Ensure the project is expected to be deployed only on the Ethereum mainnet,
+or it is acceptable to maintain a modified version of this project for different
+chains. Otherwise, re-implement the project using addresses of the necessary
+data feeds directly from constructor parameters or initializers.
+Fix 1.1
+Acknowledged.
+Risk acknowledged. Deployment on different chains isn’t
+planned by design.
+===========================================================================
+W3: InvalidExpectedOutAmount reverts
+Impact: Warning Likelihood: N/A
+Target: Order, Stonks Type: Code quality,
+Logic error
+Description
+The error InvalidExpectedOutAmount is raised in the function
+AmountConverter.getExpectedOut when the expected amount of tokens to
+receive (from a trade, for example) reaches zero.
+Listing 7. Excerpt from AmountConverter.getExpectedOut
+103 (uint256 currentPrice, uint256 feedDecimals) =
+  _fetchPriceAndDecimals(tokenFrom_, CONVERSION_TARGET);
+104 
+105 uint256 decimalsOfSellToken = IERC20Metadata(tokenFrom_).decimals();
+106 uint256 decimalsOfBuyToken = IERC20Metadata(tokenTo_).decimals();
+107 
+108 int256 effectiveDecimalDifference = int256(decimalsOfSellToken +
+  feedDecimals) - int256(decimalsOfBuyToken);
+109 
+110 if (effectiveDecimalDifference >= 0) {
+111 expectedOutputAmount = (amountFrom_ * currentPrice) / 10 **
+  uint256(effectiveDecimalDifference);
+112 } else {
+113 expectedOutputAmount = (amountFrom_ * currentPrice) * 10 **
+  uint256(-effectiveDecimalDifference);
+114 }
+115 
+116 if (expectedOutputAmount == 0) revert
+  InvalidExpectedOutAmount(expectedOutputAmount);
+The function AmountConverter.getExpectedOut is external and may be called by
+EOA (externally owned account). Furthermore, it is called from the function
+Stonks.estimateTradeOutput, where an additional margin is applied, lowering
+the final out amount.
+Listing 8. Excerpt from Stonks.estimateTradeOutput
+161 function estimateTradeOutput(uint256 amount_) public view returns
+  (uint256) {
+162 if (amount_ == 0) revert InvalidAmount(amount_);
+163 uint256 expectedBuyAmount =
+  IAmountConverter(AMOUNT_CONVERTER).getExpectedOut(TOKEN_FROM, TOKEN_TO,
+  amount_);
+164 return (expectedBuyAmount * (MAX_BASIS_POINTS -
+  MARGIN_IN_BASIS_POINTS)) / MAX_BASIS_POINTS;
+165 }
+The margin application may cause the returned value to be zero, making the
+discussed zero amount check in the contract AmountConverter insufficient.
+The function Stonks.estimateTradeOutput is then used in two project-critical
+functions:
+• Order.initialize when computing the amount of tokens to receive (buy
+token amount) for a new order,
+• Order.isValidSignature when checking if the trade would be accepted
+under conditions currently favorable to the contract owner.
+Zero buy token amount in the first case cannot cause any harm, as the final
+amount of tokens is a result of a maximum from the computed value and
+minBuyAmount_, which cannot be zero.
+Listing 9. Excerpt from Order.initialize
+99 buyAmount = Math.max(IStonks(stonks).estimateTradeOutput(sellAmount),
+  minBuyAmount_);
+In the second case, it is preferable to return the zero value rather than
+reverting the transaction. With the zero value returned, the trade is accepted
+under conditions currently favorable to the contract owner, while the revert
+statement causes the trade to be rejected.
+This issue was found by a fuzz test written in the Wake testing framework.
+See Appendix C for more details.
+Recommendation
+Consider removing the revert statement raising the InvalidExpectedOutAmount
+error as:
+• the logic of the project does not allow creating an order with the zero out
+amount (buy token amount) anyway,
+• the revert may cause a rejection of a trade (favorable to the contract
+owner) under edge case conditions.
+Fix 1.1
+Fixed, the revert statement and the error InvalidExpectedOutAmount itself have
+been removed from the AmountConverter contract.
+===========================================================================
+W4: Stablecoins assumed stable
+Impact: Warning Likelihood: N/A
+Target: AmountConverter Type: Logic error
+Description
+The project is generally designed to trade a given amount of sell tokens for
+another amount of buy tokens. A single aggregated Chainlink data feed is
+used to calculate the buy amount. However, prices from Chainlink data feeds
+are not denominated in each common stablecoin but in USD. The scenario of
+selling a token for a stablecoin while using a price denominated in USD is
+further supported by integration and unit tests present in the project.
+Using the value of a stablecoin as 1 USD can lead to catastrophic
+consequences in the event of the stablecoin depeg.
+Recommendation
+Consider using one more price data feed for correct price calculation
+between a stablecoin and USD (for each stablecoin in a trade). Otherwise,
+ensure everyone using the project is familiar with the limitations of the
+solution, and a trade during a stablecoin depeg must never be opened.
+Document this limitation in the project’s README.
+Fix 1.1
+Acknowledged.
+Risk of depeg acknowledged. The solution is only meant to be
+used a good market conditions, should be handled by ops.
+===========================================================================
+I1: Unused code
+Impact: Info Likelihood: N/A
+Target: AmountConverter, Stonks Type: Code quality
+Description
+The contract AmountConverter contains the NoPriceFeedFound error declaration,
+but the error is never used.
+Listing 10. Excerpt from AmountConverter
+35 error NoPriceFeedFound(address tokenFrom, address tokenTo);
+The contract Stonks uses the SafeCast library through a using-for directive.
+Listing 11. Excerpt from Stonks
+28 using SafeCast for uint256;
+However, the library SafeCast is never used in the contract.
+Recommendation
+Remove the unused error and using-for directive to keep up with the best
+practices.
+Fix 1.1
+Fixed, the unused code has been removed.
+===========================================================================
+I2: Missing event
+Impact: Info Likelihood: N/A
+Target: Stonks Type: Code quality
+Description
+The contract Stonks emits an event for each parameter set, except for the
+price tolerance parameter.
+Listing 12. Excerpt from Stonks
+110 PRICE_TOLERANCE_IN_BASIS_POINTS = priceToleranceInBasisPoints_;
+111 
+112 emit ManagerSet(manager_);
+113 emit AmountConverterSet(amountConverter_);
+114 emit OrderSampleSet(orderSample_);
+115 emit TokenFromSet(tokenFrom_);
+116 emit TokenToSet(tokenTo_);
+117 emit OrderDurationInSecondsSet(orderDurationInSeconds_);
+118 emit MarginInBasisPointsSet(marginInBasisPoints_);
+Recommendation
+Emit a new event with the PRICE_TOLERANCE_IN_BASIS_POINTS set in the
+contract constructor to keep up with the conventions established in the
+project.
+Fix 1.1
+Fixed. The event PriceToleranceInBasisPointsSet has been added.
+Listing 13. Excerpt from Stonks
+116 emit PriceToleranceInBasisPointsSet(priceToleranceInBasisPoints_);
+===========================================================================
+I3: Duplicated code
+Impact: Info Likelihood: N/A
+Target: **/* Type: Code quality
+Description
+In the Stonks contract constructor, there is a block of code that can be
+simplified.
+Listing 14. Excerpt from Stonks
+86 if (orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS)
+  {
+87 revert InvalidOrderDuration(
+88 MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS,
+  MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS, orderDurationInSeconds_
+89 );
+90 }
+91 if (orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS)
+  {
+92 revert InvalidOrderDuration(
+93 MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS,
+  MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS, orderDurationInSeconds_
+94 );
+95 }
+Recommendation
+Join the condition using the OR operator and remove the code duplication.
+if (orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS ||
+orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS) {
+  revert InvalidOrderDuration(
+  MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS,
+MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS, orderDurationInSeconds_
+  );
+}
+Fix 1.1
+Fixed. The conditions have been joined according to our recommendation.
+Listing 15. Excerpt from Stonks
+85 if (
+86 orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS
+87 || orderDurationInSeconds_ <
+  MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS
+88 ) {
+===========================================================================
+I4: Typos and documentation
+Impact: Info Likelihood: N/A
+Target: **/* Type: Code quality
+Description
+The codebase contains a few typos and inconsistencies in the
+documentation and code itself.
+1) In the Stonks contract documentation, there is a typo "tokerance".
+Listing 16. Excerpt from Stonks
+20 * - Stores key trading parameters: token pair, margin, price tokerance and
+  order duration in immutable variables.
+2) Error definitions InvalidOrderDuration, MarginOverflowsAllowedLimit,
+PriceToleranceOverflowsAllowedLimit, and MinimumPossibleBalanceNotMet in the
+Stonks contract contain typo "recieved".
+Listing 17. Excerpt from Stonks
+59 error InvalidOrderDuration(uint256 min, uint256 max, uint256 recieved);
+60 error MarginOverflowsAllowedLimit(uint256 limit, uint256 recieved);
+61 error PriceToleranceOverflowsAllowedLimit(uint256 limit, uint256
+  recieved);
+62 error MinimumPossibleBalanceNotMet(uint256 min, uint256 recieved);
+3) The diagram in Stonks.estimateTradeOutput function documentation
+contains expectedBuyAmount, but the description refers to
+expectedPurchaseAmount.
+Listing 18. Excerpt from Stonks
+150 *
+32 of 42
+151 * | estimatedTradeOutput expectedBuyAmount
+152 * | --------------*--------------------------*----------------->
+  amount
+153 * | <-------- margin -------->
+154 *
+155 * where:
+156 * expectedPurchaseAmount - amount received from the
+  amountConverter based on Chainlink price feed.
+157 * margin - % taken from the expectedPurchaseAmount includes CoW
+  Protocol fees and maximum accepted losses
+158 * to handle market volatility.
+159 * estimatedTradeOutput - expectedPurchaseAmount subtracted by the
+  margin that is expected to be result of the trade.
+160 */
+Recommendation
+Fix typos and inconsistencies in the code.
+Fix 1.1
+Fixed. All reported typos and inconsistencies have been fixed.

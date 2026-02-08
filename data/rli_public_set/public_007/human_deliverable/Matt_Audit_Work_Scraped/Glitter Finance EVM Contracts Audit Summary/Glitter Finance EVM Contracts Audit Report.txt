@@ -1,0 +1,256 @@
+Repository URL: httpsgithub.comGlitter-Finance
+Full commit hash: 462ed5b
+========================================================================
+Findings Summary:
+==================
+M1: Missing handling of a token shortage
+Medium severity issue
+Impact: High Likelihood: Low
+Target: BaseVault, GlitterRouter Type: Contract logic
+Description
+The contract BaseVault is accumulating fees in the release function:
+function release(address _to, uint256 _amount, uint8 _feeRate) external
+onlyRouter {
+  uint256 txFee = (_amount * _feeRate) / router.FEE_DENOMINATOR();
+  fees += txFee;
+  _releaseImpl(_to, _amount - txFee);
+}
+Fees can be then collected by calling the function collectFees.
+function collectFees() external onlyOwner {
+  uint256 tmpFees = fees;
+  fees = 0;
+  _releaseImpl(feeCollector, tmpFees);
+}
+However, it is not granted, that the contract is holding enough tokens to
+send fees to the owner.
+Recommendation
+The contract should perform a check, that there are always enough tokens in
+the contract to collect fees.
+Solution (Revision 1.1)
+The new requirement is added to the releaseImpl function
+require(_amount <= tokenBalance(), "Vault: insufficient funds");
+where the function tokenBalance() is defined as follows:
+function tokenBalance() public view returns (uint256) {
+  return token.balanceOf(address(this)) - fees;
+}
+This requirement will ensure that the contract will always have enough tokens
+to send fees to the owner.
+===========================================================================
+M2: Problematic decimals
+Medium severity issue
+Impact: High Likelihood: Low
+Target: LockReleaseVault,
+MintBurnVault
+Type: System logic
+Description
+Tokens with different decimals across the different blockchains can lead to
+unintended behavior. The "same" token on two blockchains can have a
+different decimals number. This is not a very common scenario, but it is not
+impossible. Thus it is essential to carefully handle and check the decimals are
+the same, and also not hardcode the decimals to 18.
+The problematic scenarios can occur in two cases:
+• Lock/release vaults are deployed on two chains for handling the same
+token, however, the decimals of the seemingly same token are not the
+same.
+• Lock/release vault is deployed on a source chain and mint/burn vault is
+deployed on the destination chain. This approach can be used if the token
+already exists on a source chain, but not on the destination chain. If the
+token on the source chain has a different decimals number than 18, it is
+not possible to customize the decimals on the destination chain.
+Vulnerable scenario
+One example of the vulnerable scenario is a cross-chain transfer of USDC
+stablecoin between Ethereum blockchain and Binance Smart Chain (BSC). On
+Ethereum, USDC token has a precision of 6 decimals. On BSC, the precision is
+set to 18 decimals. If there is no special logic in the backend code for
+handling the difference of decimals, and the value is simply passed to the
+destination chain, it can lead to a critical scenario.
+More specifically, a cross-chain transfer from BSC to Ethereum (scenario of
+LockReleaseVaults on both chains):
+• 10 USDC ($) on BSC in a raw format = 10*10**18 = 10 000 000 000 000 000
+000
+• cross-chain transfer to Ethereum
+• 10 USDC ($) on Ethereum in a raw format = 10*10**6 = 1 000 000
+• If the raw value is passed to the contract on Ethereum blockchain, the
+Vault contract will send 10**12 times more USDC to the destination
+address
+In the opposite direction, funds will be lost.
+The second problematic scenario has been already mentioned in the
+description of the issue. Because of the hardcoded decimals, it is not
+possible to deploy a MintBurnVault on the destination chain with a different
+decimals number than 18.
+Recommendation
+This issue can and should be primarily addressed in the backend code. The
+scope of the audit is EVM contracts only, the backend code is considered a
+black box, thus we cannot check the correctness of the logic there. However,
+it is essential to mention this issue in the audit, because the hardcoded
+decimals number in the contract has to be changed in the contract logic.
+From the view of the contract logic, there are two approaches to partly
+handle this issue:
+• Send a decimals number as one of the parameters of the cross-chain
+message and perform a validation on the destination chain such as
+require(src.decimals == token.decimals()). This can avoid the worst-case
+scenario, but it is not a complete solution.
+• Allow the decimals number to be set in the initialization of the contract.
+This allows deploying existing tokens from the source chain with a decimal
+number != 18 to the destination chain.
+Solution (Revision 1.1)
+The possibility to set the decimals number in the initialization of the contract
+was added to the contract. The logic for handling the same token with
+different decimals on the source and destination chain is implemented in the
+backend code.
+Client’s response:
+" The backend should have been able to handle this based on
+the logic already implemented, however for sake of redundancy,
+it was agreed to add the functionality to input decimals into
+the initialization of the vault contract. "
+===========================================================================
+L1: Vaults mapping logic
+Low severity issue
+Impact: Medium Likelihood: Low
+Target: GlitterRouter Type: Contract logic
+Description
+The mapping vaults in the contract GlitterRouter contain vault addresses
+where keys are represented by vaultID. The ID is incremented after every new
+vault is added by calling the function addVault.
+There is no direct security risk, but the logic has 2 weird properties:
+• One vault address can be added 2^32-1 times (duplicates),
+• no possibility of removing a vault.
+Vulnerable scenario
+If one of the vault addresses became invalid/malicious/broken, it may become
+confusing for users because the vault seems to be still active. It may
+potentially lead to a security risk when a user calls the deposit function with
+"broken" vaultID.
+There are three dangerous scenarios:
+• In the best case, the deposit function will revert.
+• If the vault is broken, the user’s asset may be stuck or lost.
+• In a case, when the vault is controlled by a malicious actor, the user’s
+asset will be stolen.
+Recommendation
+Add a function to remove vaults from the mapping. It will allow the contract
+owner or recoverer address to remove broken vaults and prevent users from
+depositing assets into them. In the remove function, implement event logging
+to increase transparency.
+Add a check to prevent redundant adding the same vault address twice.
+Mapping can also be implemented in a way, where the address of the vault is
+the key and the value is a boolean representing whether the vault is active or
+not.
+Solution (Revision 1.1)
+Vault mapping was changed to a mapping where the key is the address of the
+vault, and the value is a boolean representing whether the vault is active or
+not. Now there is no possibility of adding the same vault twice. However,
+there is still no possibility of removing vaults with the following.
+The client proposes to change the severity to Informational. A user should
+use the SDK provided by the client. However, some potentially vulnerable
+scenarios exist for users interacting directly with a contract. For the
+mentioned reasons, the likelihood has been changed to low, which results in a
+low severity.
+Client’s response:
+" Glitter disagrees with but respects the decision by Ackee to
+label this as a (low risk) vulnerability. As Glitter’s premise
+is to make blockchain easier for the masses, it is necessary
+for us to abstract direct contract interactions, and calling
+the contract directly is not the intended route. It should
+never be possible to interact with a deprecated vault directly
+through our tooling or interfaces. "
+===========================================================================
+W1: Lack of data validation in deposit function
+Impact: Warning Likelihood: N/A
+Target: GlitterRouter Type: Data validation
+Description
+The function deposit in the contract GlitterRouter deposits msg.sender’s
+amount into the given vault, and then it emits the following event that the
+bridge backend logic will handle:
+emit BridgeDeposit(
+  _vaultId,
+  _amount,
+  _destinationChainId,
+  _destinationAddress,
+  _protocolId
+);
+The last three parameters in the event are not validated at all.
+• _destinationChainId
+• _destinationAddress
+• _protocolId
+Vulnerable scenario
+If any of those parameters are incorrect by mistake, the deposit will be
+performed. However, the bridge backend cannot forward the message with
+incorrect data and transfer/mint the asset on the destination bridge. It
+results in the loss of assets for the msg.sender. The function refund allows the
+owner to send a "lost" asset back. However, it requires the owner’s
+responsibility to spot the scenario mentioned above and his honesty to
+return the asset.
+Recommendation
+The contract is obviously built to be called by the front-end dApp, where
+some data validation might be performed, and it does not allow a user to pass
+incorrect data. Nevertheless, more advanced users might interact with the
+protocol directly and this approach should not be error-prone.
+For the _destinationChainId and _protocolId, implement mapping that will
+hold active IDs and view functions so users can check active IDs before
+passing the parameter to the deposit function.
+For the _destinationAddress, implement a zero bytes check.
+This issue can be addressed in the backend code. The scope of the audit is
+EVM contracts only, the backend code is considered a black box, thus we
+cannot check the correctness of the logic there. However, it is essential to
+mention this issue in the audit report as a warning even if the impact is high,
+as it can lead to a critical scenario.
+Solution (Revision 1.1)
+Zero bytes check for destination address was implemented.
+Client’s response:
+" Data validation cannot be handled on-chain due to the
+parameterized nature of the bridge. We will have web2 apis to
+query this information, as well as an updated SDK. Due to the
+sheer number of chains and vaults we plan on supporting,
+having a mapping updated in each router every time there is a
+new protocolID or destinationchain added becomes impractical.
+Also, not all addresses are in the same format in non-evm
+chains, and protocolIds are just used to track deposits for
+project partners, so incorrect data at that point doesn’t
+impact bridge performance, only fee sharing. In addition, any
+user directly calling the contract without use of the tools we
+distribute and keep up to date takes the risk on themselves.
+We provide ample frontend checks and tools to ensure addresses
+are valid (though wallet connect to verify ownership) and the
+inputs calls to the contract are correct. In our SDK, we
+perform many of the same checks. "
+===========================================================================
+W2: Lack of emits in state-changing functions
+Impact: Warning Likelihood: N/A
+Target: BaseVault, GlitterRouter Type: Logging
+Description
+Contracts do not emit events in state-changing functions. BaseVault
+functions:
+• _setFeeCollector
+• _setMinDeposit
+• _setMaxDeposit
+• _setRouter
+GlitterRouter functions:
+• setMaxFee
+• pause
+• unpause
+Those emits are necessary for the maximum transparency of the protocol to
+its users, developers, and other stakeholders. Logging is also very useful for
+potential after-incident analysis.
+Recommendation
+Add events to the mentioned functions, that are changing a contract state.
+Solution (Revision 1.1)
+Events were added to state-changing functions.
+===========================================================================
+I1: Missing parameters in NatSpec
+Impact: Info Likelihood: N/A
+Target: BaseVault, GlitterRouter Type: Documentation
+Description
+Some functions do not document all the input parameters.
+• function - missing @param
+GlitterRouter:
+• deposit - _protocolId
+• release - _feeRate
+• refund - _depositId
+• setMaxFeeRate - _maxFeeRate
+BaseVault:
+• release - _feeRate
+Recommendation
+There is no reason to exclude some parameters, and it is a good practice to
+have complete NatSpec documentation. Add missing NatSpec
+documentation.
+Solution (Revision 1.1)
+The documentation in the code was updated.

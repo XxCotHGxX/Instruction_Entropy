@@ -1,0 +1,568 @@
+Repository URL: https://github.com/rhinestone/module-registry/commit/0b4b232
+Full commit hash: 10c3719589252529f40f170f49cb2768508c8572
+========================================================================
+Findings Summary:
+==================
+H1: threshold = 1 optimization DoS
+High severity issue
+Impact: High Likelihood: Medium
+Target: TrustManager.sol Type: Denial of service
+Description
+The function _check in the TrustManager contract is used to verify if there are
+enough attestations of a module from smart account trusted attesters. The
+code contains an optimization for threshold = 1, checking only the first
+attester and enforcing their attestation to be present and valid.
+Listing 1. Excerpt from TrustManager
+118 // smart account only has ONE trusted attester
+119 // use this condition to save gas
+120 else if (threshold == 1) {
+121 AttestationRecord storage $attestation = $getAttestation({
+  module: module, attester: attester });
+122 $attestation.enforceValid(moduleType);
+123 }
+The finding was discovered by a fuzz test written in the Wake testing
+framework.
+Exploit scenario
+A smart account owner sets 3 trusted attesters with threshold = 1, i.e., a
+single valid attestation is required. The last-stored attester submits an
+attestation for a new module.
+The smart account owner wants to integrate the module and calls the check
+function. Due to the broken optimization, the function will return false as the
+attestation of the first attester is not present.
+Recommendation
+Remove the optimization for threshold = 1 and check all attesters.
+Fix 1.1
+Fixed. The _check function logic was updated. The optimization for threshold
+= 1 is still present, but all attesters are checked in case the first attestation is
+not valid.
+===========================================================================
+M1: Arbitrary call on factory
+Medium severity issue
+Impact: High Likelihood: Low
+Target: ModuleManager.sol Type: External call
+Description
+The function ModuleManager.deployViaFactory allows executing arbitrary calls
+on arbitrary factory contract on behalf of the Registry contract using the
+callOnFactory parameter. The validation in the
+requireExternalResolverOnModuleRegistration function can be bypassed using
+the custom resolver.
+Listing 2. Excerpt from ModuleManager
+109 (bool ok, bytes memory returnData) = factory.call{ value: msg.value
+  }(callOnFactory);
+According to the client the Registry contract is not meant to interact with
+any 3rd party protocols. Therefore the risk of misusing this attack vector is
+not actual. Also, the _storeModuleRecord function contains the condition
+_isContract for the external call’s return value which limits the attack
+possibilities. However, the solution design should be future-proof and all
+potential back doors should be closed.
+Exploit scenario
+The following example exploit scenarios are not applicable in the current
+state rather explain the general risk of this approach.
+First example:
+1. Let’s assume that the Registry contract holds some tokens.
+2. The attacker passes an address of the ERC-20 token as the factory
+parameter into the deployViaFactory function and encodes the
+ERC20.approve function with the attacker’s address as a spender into the
+callOnFactory parameter.
+3. Then the Registry contract calls the ERC20.approve function on the token
+contract and approves the attacker to drain all tokens from the Registry
+contract.
+Second example:
+1. Let’s assume the Registry contract is staking tokens in some staking
+protocol.
+2. The attacker passes the address of the staking contract as the factory
+into the deployViaFactory function and encodes the withdraw function into
+the callOnFactory parameter.
+3. The Registry contract executes the token withdrawal from the staking
+contract.
+4. The attacker uses the first example scenario to drain the funds.
+Allowing to pass the target address and raw call data into the function and
+executing this external call opens a limitless amount of possible attack
+vectors.
+Recommendation
+Move the external call to the separated neutral contract divided from the
+Registry contract to remove the Registry from msg.sender.
+Fix 1.1
+Fixed using the new FactoryTrampoline contract.
+Added factory call trampoline, so calls made to factory don’t
+come from msg.sender == registry.
+===========================================================================
+M2: Attesters are not de-duplicated
+Medium severity issue
+Impact: High Likelihood: Low
+Target: TrustManagerExternalAtteste
+rList.sol
+Type: Data validation
+Description
+The overloaded function check in TrustManagerExternalAttesterList does not
+verify if the supplied list of attesters does not contain duplicates.
+Listing 3. Excerpt from TrustManagerExternalAttesterList
+28 for (uint256 i; i < attestersLength; ++i) {
+29 if ($getAttestation(module,
+  attesters[i]).checkValid(ZERO_MODULE_TYPE)) {
+30 --threshold;
+31 }
+32 if (threshold == 0) return;
+33 }
+Listing 4. Excerpt from TrustManagerExternalAttesterList
+45 for (uint256 i; i < attestersLength; ++i) {
+46 if ($getAttestation(module, attesters[i]).checkValid(moduleType))
+  {
+47 --threshold;
+48 }
+49 if (threshold == 0) return;
+50 }
+Exploit scenario
+Due to an off-chain implementation issue, the attesters array contains
+duplicated addresses. The check function returns true even for threshold = 2
+and the attesters array [A, A, B] with A being the only attester that attested
+a given module.
+Recommendation
+Sort and de-duplicate the attester arrays. Optionally, assume the arrays are
+already sorted, verify that and check for duplicates. Make the behavior
+consistent with the TrustManager contract (see W6).
+Update 1.1
+The following condition was added to the check functions:
+if (attester < _attesterCache) revert InvalidTrustedAttesterInput();
+else _attesterCache = attester;
+The check prevents supplying the zero address but does not prevent
+duplicates due to the incorrect inequality sign (<) used in the condition.
+Fix 1.2
+The inequality sign was fixed to <= to prevent duplicates.
+===========================================================================
+M3: registerModule front-running
+Medium severity issue
+Impact: High Likelihood: Low
+Target: ModuleManager.sol Type: Front running
+Description
+The function ModuleManager.registerModule is vulnerable to the front-running
+attack. The metadata parameter validation relies on the external resolver
+contract. The front-runner can inject arbitrary data into the metadata
+parameter if the metadata parameter validation is missing in the resolver
+contract. Also, the validation can be bypassed by deploying and registering a
+custom resolver contract.
+Listing 5. Excerpt from ModuleManager
+72 function registerModule(ResolverUID resolverUID, address moduleAddress,
+  bytes calldata metadata) external {
+73 ResolverRecord storage $resolver = $resolvers[resolverUID];
+74 
+75 // ensure that non-zero resolverUID was provided
+76 if ($resolver.resolverOwner == ZERO_ADDRESS) revert InvalidResolver(
+  $resolver.resolver);
+77 
+78 ModuleRecord memory record = _storeModuleRecord({
+79 moduleAddress: moduleAddress,
+80 sender: ZERO_ADDRESS, // setting sender to address(0) since
+  anyone can invoke this function
+81 resolverUID: resolverUID,
+82 metadata: metadata
+83 });
+84 
+85 // resolve module registration
+86 record.requireExternalResolverOnModuleRegistration({ moduleAddress:
+  moduleAddress, $resolver: $resolver });
+87 }
+Exploit scenario
+A malicious front-running bot is waiting for registerModule transaction in the
+pool and creates a front-running transaction with injected arbitrary
+resolverUID and/or metadata for the registered module. After the successful
+module registration, the arbitrary resolverUID and/or metadata get stored in
+the ModuleRecord. Using this technique the bot can systematically sabotage
+registrations of externally deployed modules.
+Recommendation
+One of the possible solutions would be moving the metadata into the deployed
+module contract. Also, the module contract can contain resolverUID whitelist
+to avoid arbitrary resolver assignments.
+Fix 1.1
+Acknowledged.
+We are aware of the frontrunning issue as described in the code.
+The problem specifically impacts modules not deployed through
+the registry as a factory. The majority of modules are
+unaffected. The registration function susceptible to
+frontrunning is intentionally positioned to accommodate
+external factories.
+— Rhinestone
+===========================================================================
+M4: trustAttesters downcast
+Medium severity issue
+Impact: High Likelihood: Low
+Target: TrustManager.sol Type: Data validation
+Description
+The function trustAttesters in TrustManager contract is used to set a new set
+of trusted attester addresses for a given account.
+Listing 6. Excerpt from TrustManager
+50 if (threshold > attestersLength) {
+51 threshold = uint8(attestersLength);
+52 }
+53 
+54 $trustedAttester.attesterCount = uint8(attestersLength);
+The length of the attesters array is downcasted to uint8, making the function
+dysfunctional for 256 attesters or more.
+Recommendation
+Consider using a bigger data type to store the attesters length. In all cases,
+use SafeCast or an alternative to revert the transaction if the length of the
+attesters array is greater than the maximum for the used data type.
+Fix 1.1
+Fixed, the downcasting was removed.
+===========================================================================
+L1: Resolver one-step ownership transfer
+Low severity issue
+Impact: Medium Likelihood: Low
+Target: ResolverManager.sol Type: Access controls
+Description
+The ResolverManager contract uses a one-step ownership transfer.
+Transferring ownership to the wrong address can lead to permanent loss of
+access to the ResolverManager.setResolver and transferResolverOwnership
+functions protected by onlyResolverOwner modifier.
+Also, it lacks a zero-address validation therefore allowing permanent
+ownership renouncement.
+Listing 7. Excerpt from ResolverManager
+121 function transferResolverOwnership(ResolverUID uid, address newOwner)
+  external onlyResolverOwner(uid) {
+122 $resolvers[uid].resolverOwner = newOwner;
+123 emit NewResolverOwner(uid, newOwner);
+124 }
+Recommendation
+Implement a two-step ownership transfer and add a zero-address check if
+renouncing ownership is not an intended feature.
+Fix 1.1
+Acknowledged.
+Not checking zero address is a feature that allows a resolver to
+become non-changeable.
+===========================================================================
+W1: Deployment and attestation denial of service
+Impact: Warning Likelihood: N/A
+Target: ModuleManager.sol Type: Denial of service
+Description
+Resolver and schema validators can block module deployment and
+attestation using the resolveAttestation function on the resolver and the
+validateSchema function on the schema validator. The more important
+revocation process cannot be blocked using this scenario. According to the
+client, this is known and intended behavior.
+This is expected behavior.
+— Rhinestone
+Recommendation
+Including this warning in the report for external readers' information to be
+aware of this non-severe risk.
+Fix 1.1
+Acknowledged.
+This is expected behavior.
+===========================================================================
+W2: Inconsistent revert errors
+Impact: Warning Likelihood: N/A
+Target: ModuleManager.sol Type: Errors
+Description
+The function ModuleManager.deploy reverts with InvalidResolver error and
+ModuleManager.deployViaFactory reverts with InvalidResolverUID error.
+Also, due to the resolver ownership transfer it is able to set the owner to
+zero-address and in this edge-case, the InvalidResolverUID error would not
+be relevant.
+Listing 8. Excerpt from ModuleManager
+76 if ($resolver.resolverOwner == ZERO_ADDRESS) revert InvalidResolver(
+  $resolver.resolver);
+Listing 9. Excerpt from ModuleManager
+103 if ($resolver.resolverOwner == ZERO_ADDRESS) revert
+  InvalidResolverUID(resolverUID);
+Recommendation
+Consider unifying these errors.
+Fix 1.1
+Fixed. The error in the deployModule function was changed to
+InvalidResolverUID.
+===========================================================================
+W3: EIP-712 compliance
+Impact: Warning Likelihood: N/A
+Target: AttestationLib.sol Type: EIP compliance
+Description
+The signatures verified in the TrustManagerExternalAttesterList contract are
+not EIP-712 compliant.
+The standard requires a top-level struct defined for signed data with type
+hash of the struct signed together with the data.
+Listing 10. Excerpt from AttestationLib
+30 function hash(AttestationRequest calldata data, uint256 nonce) internal
+  pure returns (bytes32 _hash) {
+31 _hash = keccak256(abi.encode(ATTEST_TYPEHASH,
+  keccak256(abi.encode(data)), nonce));
+32 }
+33 
+34 function hash(AttestationRequest[] calldata data, uint256 nonce) internal
+  pure returns (bytes32 _hash) {
+35 _hash = keccak256(abi.encode(ATTEST_TYPEHASH,
+  keccak256(abi.encode(data)), nonce));
+36 }
+37 
+38 function hash(RevocationRequest calldata data, uint256 nonce) internal
+  pure returns (bytes32 _hash) {
+39 _hash = keccak256(abi.encode(REVOKE_TYPEHASH,
+  keccak256(abi.encode(data)), nonce));
+40 }
+41 
+42 function hash(RevocationRequest[] calldata data, uint256 nonce) internal
+  pure returns (bytes32 _hash) {
+43 _hash = keccak256(abi.encode(REVOKE_TYPEHASH,
+  keccak256(abi.encode(data)), nonce));
+44 }
+However, in the code snippet, type hashes of a single attestation and
+revocation requests are used. The nonce is not a part of any struct, and the
+type hashes do not describe that arrays of requests are signed.
+Recommendation
+Define four more wrapper structs for attestation and revocation requests,
+wrapping the nonce and the array of requests or a single request. Follow EIP-
+712 when preparing type hashes and the final data payload.
+Update 1.1
+Wrapper structs were introduced in the TrustManagerExternalAttesterList
+contract. However, the hash generation still does not comply with EIP-712
+because the data encoding is not applied correctly on nested structs and
+arrays.
+Fix 1.2
+Fixed. The EIP-712 compliance was achieved by applying the correct data
+encoding on nested structs and arrays and unifying the naming in structs
+and type hashes.
+===========================================================================
+W4: findTrustedAttesters revert on no attesters
+Impact: Warning Likelihood: N/A
+Target: TrustManager.sol Type: User experience
+Description
+The function findTrustedAttesters returns the array of the attesters
+currently set for a given smart account.
+Listing 11. Excerpt from TrustManager
+146 function findTrustedAttesters(address smartAccount) public view returns
+  (address[] memory attesters) {
+147 TrustedAttesterRecord storage $trustedAttesters =
+  $accountToAttester[smartAccount];
+148 
+149 uint256 count = $trustedAttesters.attesterCount;
+150 address attester0 = $trustedAttesters.attester;
+151 
+152 attesters = new address[](count);
+153 attesters[0] = attester0;
+154 
+155 for (uint256 i = 1; i < count; i++) {
+156 // get next attester from linked List
+157 attesters[i] = $trustedAttesters.linkedAttesters[attesters[i -
+  1]];
+158 }
+159 }
+The function reverts with the panic code 50 (out-of-bounds index access)
+when a smart contract has no attesters set.
+Recommendation
+Consider returning an empty array or reverting with a more user-friendly error
+message/data.
+Fix 1.1
+Fixed. The findTrustedAttesters function returns an empty array when
+attesterCount == 0.
+===========================================================================
+W5: trustAttesters zero address validation
+Impact: Warning Likelihood: N/A
+Target: TrustManager.sol Type: Data validation
+Description
+The function trustAttesters sets trusted attesters for an account. It
+performs the zero address validation for all attester addresses except the
+last one.
+Listing 12. Excerpt from TrustManager
+54 $trustedAttester.attesterCount = uint8(attestersLength);
+55 $trustedAttester.threshold = threshold;
+56 $trustedAttester.attester = attesters[0];
+57 
+58 attestersLength--;
+59 
+60 // setup the linked list of trusted attesters
+61 for (uint256 i; i < attestersLength; i++) {
+62 address _attester = attesters[i];
+63 // user could have set attester to address(0)
+64 if (_attester == ZERO_ADDRESS) revert
+  InvalidTrustedAttesterInput();
+65 $trustedAttester.linkedAttesters[_attester] = attesters[i + 1];
+66 }
+Consequently, it is possible to call the trustAttesters function with the last
+attester being the zero address.
+Recommendation
+Perform the zero address validation even for the last attester.
+Fix 1.1
+Fixed. Added attesters[0] != ZERO_ADDRESS validation in combination with
+attesters.isSortedAndUniquified() validation.
+===========================================================================
+W6: Inconsistent data validation
+Impact: Warning Likelihood: N/A
+Target: TrustManager.sol,
+TrustManagerExternalAtteste
+rList.sol
+Type: Data validation
+Description
+The contracts TrustManager and TrustManagerExternalAttesterList contain
+multiple behavioral inconsistencies even though the functionality is almost
+identical.
+The inconsistencies are:
+• threshold is truncated to attestersLength in the TrustManager contract,
+• the case threshold = 0 is handled differently in both contracts,
+• different revert data in the case of no trusted attesters set,
+• attester de-duplication is not performed in the
+TrustManagerExternalAttesterList contract.
+Recommendation
+It is recommended to revert on the first occurrence of invalid data and not to
+adjust parameters to reasonable values.
+Specifically, it is recommended to:
+• revert in the TrustManagerExternalAttesterList contract if threshold = 0
+with the same error as in TrustManager contract,
+• revert in the trustAttesters function if threshold > attestersLength, make
+the behavior consistent with the TrustManagerExternalAttesterList
+contract,
+• use the same revert data in the case of no trusted attesters (empty array)
+in both contracts,
+• perform the attester de-duplication in the
+TrustManagerExternalAttesterList contract or check that attesters are
+sorted and unique, keep the behavior consistent with TrustManager.
+Fixed. The recommendations were applied.
+===========================================================================
+W7: TrustLib high-order bits not cleared
+Impact: Warning Likelihood: N/A
+Target: TrustLib.sol Type: Data validation
+Description
+In the following code snippets, assembly is used to extract data from a single
+storage slot.
+Listing 13. Excerpt from TrustLib
+40 assembly {
+41 let mask := 0xffffffffffff
+42 let slot := sload($attestation.slot)
+43 attestedAt := and(mask, slot)
+44 slot := shr(48, slot)
+45 expirationTime := and(mask, slot)
+46 slot := shr(48, slot)
+47 revocationTime := and(mask, slot)
+48 slot := shr(48, slot)
+49 packedModuleType := and(mask, slot)
+50 }
+Listing 14. Excerpt from TrustLib
+98 assembly {
+99 let mask := 0xffffffffffff
+100 let slot := sload($attestation.slot)
+101 attestedAt := and(mask, slot)
+102 slot := shr(48, slot)
+103 expirationTime := and(mask, slot)
+104 slot := shr(48, slot)
+105 revocationTime := and(mask, slot)
+106 slot := shr(48, slot)
+107 packedModuleType := and(mask, slot)
+108 }
+packedModuleType is of the type uint32, but the used mask extracts 48 bits,
+opening a possibility of preserving dirty high-order bits.
+Recommendation
+Use a 32-bit mask when extracting packedModuleType.
+Fix 1.1
+Fixed. The 32-bit mask is now used.
+===========================================================================
+I1: Multiple interfaces
+Impact: Info Likelihood: N/A
+Target: IRegistry.sol Type: Best practices
+Description
+The IRegistry.sol file contains IERC7484 and IRegistry interfaces.
+Recommendation
+Move the IERC7484 interface to a separate file.
+Fix 1.1
+Fixed. The IERC7484 interface was separated and moved to the interfaces
+directory.
+===========================================================================
+I2: Inconsistent parameter naming
+Impact: Info Likelihood: N/A
+Target: DataTypes.sol Type: Naming
+Description
+Parameters in DataTypes.schemaEq and DataTypes.schemaNeq overloaded
+operators are named uid1 and uid, all other functions use uid1 and uid2.
+Recommendation
+Unify the naming.
+Fix 1.1
+Fixed. The parameters were renamed.
+===========================================================================
+I3: Duplicated code
+Impact: Info Likelihood: N/A
+Target: TrustLib.sol Type: Code quality
+Description
+The TrustLib library contains a duplicated assembly code.
+Listing 15. Excerpt from TrustLib
+40 assembly {
+41 let mask := 0xffffffffffff
+42 let slot := sload($attestation.slot)
+43 attestedAt := and(mask, slot)
+44 slot := shr(48, slot)
+45 expirationTime := and(mask, slot)
+46 slot := shr(48, slot)
+47 revocationTime := and(mask, slot)
+48 slot := shr(48, slot)
+49 packedModuleType := and(mask, slot)
+50 }
+Listing 16. Excerpt from TrustLib
+98 assembly {
+99 let mask := 0xffffffffffff
+100 let slot := sload($attestation.slot)
+101 attestedAt := and(mask, slot)
+102 slot := shr(48, slot)
+103 expirationTime := and(mask, slot)
+104 slot := shr(48, slot)
+105 revocationTime := and(mask, slot)
+106 slot := shr(48, slot)
+107 packedModuleType := and(mask, slot)
+108 }
+Recommendation
+Move the block into a separated private function.
+Fix 1.1
+Acknowledged.
+Using the duplicated code, we can save gas by removing a jump
+instruction.
+— Rhinestone
+===========================================================================
+I4: Modifier placement
+Impact: Info Likelihood: N/A
+Target: SchemaManager.sol Type: Best practices
+Description
+In the SchemaManager contract, the modifier onlySchemaValidator is placed
+between functions.
+Recommendation
+Move the onlySchemaValidator modifier above all functions according to best
+practices and improve readability.
+Fix 1.1
+Fixed. The modifier was moved.
+===========================================================================
+I5: Missing NatSpec documentation
+Impact: Info Likelihood: N/A
+Target: AttestationLib.sol Type: Documentation
+Description
+The AttestationLib library is missing NatSpec documentation.
+Recommendation
+Cover the AttestationLib library by NatSpec documentation.
+Fix 1.1
+Fixed. The missing documentation in the AttestationLib was added.
+===========================================================================
+I6: _storeAttestation false comment
+Impact: Info Likelihood: N/A
+Target: AttestationManager.sol Type: Documentation
+Description
+The function _storeAttestation is internally used to store attestations of
+modules. It is documented with the following comment:
+Listing 17. Excerpt from AttestationManager
+99 * @dev This function will revert if the same module is attested twice by
+  the same attester.
+100 * If you want to re-attest, you have to revoke your attestation
+  first, and then attest again.
+The comment is not true, because it is possible to overwrite (even valid)
+attestations.
+Recommendation
+Correct the comment or adjust the behavior of the _storeAttestation
+function to reflect the comment.
+Fix 1.1
+The finding was fixed by keeping the comment but updating the logic to
+prevent overwriting existing attestations without a revocation.
+===========================================================================
+I7: NewTrustedAttesters event
+Impact: Info Likelihood: N/A
+Target: TrustManager.sol Type: User experience
+Description
+The event NewTrustedAttesters is emitted when new trusted attesters are set
+for a given account.
+Listing 18. Excerpt from TrustManager
+68 emit NewTrustedAttesters();
+However, the information is only relevant to the account that updated the
+attesters set.
+Recommendation
+Add the account (msg.sender) as a parameter (optionally indexed) to the
+event. Also, consider including threshold and hash from attesters.
+Fix 1.1
+Fixed. The msg.sender parameter was added to the NewTrustedAttesters event.

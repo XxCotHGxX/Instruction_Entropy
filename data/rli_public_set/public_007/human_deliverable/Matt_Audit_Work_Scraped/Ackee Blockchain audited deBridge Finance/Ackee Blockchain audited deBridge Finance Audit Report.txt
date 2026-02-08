@@ -1,0 +1,343 @@
+commit: d02d80bb6b7ba091eba00fdffb304adb7b49344b
+Findings Summary:
+==================
+H1: InitSendBridge computational budget
+High severity issue
+Impact: Medium Likelihood: High
+Target: settings/src/lib.rs, L#1304 Type: Compute budget
+Description
+The initialize_send_bridge instruction consumed all computational units. The
+problem occurred during CPI from the init_token_staking_wallet() function.
+The issue can be fixed by creating a staking_wallet off-chain. You can find a
+test instruction in Appendix C.
+"Program BkE5dgkHHhQZZCEjqDsRSLrkfZGYbeSWAjBzRSd2vyzh consumed 200000 of
+200000 compute units"
+===========================================================================
+H2: Custom program errors in settings program
+High severity issue
+Impact: Medium Likelihood: High
+Target: settings/src/lib.rs, L#701, 702,
+775, 899
+Type: Account
+constraint
+Description
+These errors were caused by allocating insufficient space for accounts being
+created. They can be fixed by increasing the allocated space (mem::size_of).
+Also, one of these errors was caused by the use of a bad constraint. You can
+find a test instruction in Appendix D.
+constraint = bridge_fee.to_account_info().is_not_exists()
+===========================================================================
+H3: The program violates the stack size at
+runtime
+High severity issue
+Impact: Medium Likelihood: High
+Target: debridge/src/lib.rs, L#145 Type: Stack size
+violation
+Description
+This error is caused by calling the send() instruction. You can find a test
+instruction in Appendix E.
+===========================================================================
+M1: Use create_program_address instead of
+find_program_address
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: **/* Type: Compute budget
+Description
+Call create_program_address with BUMP instead of find_program_address on chain. There’s a risk of exceeding a compute budget. We recommend
+computing the BUMP off-chain.
+#[account(
+  constraint = Pubkey::find_program_address(
+  &[State::SEED],
+  &settings::ID
+  ).eq(&(state.key(), state.state_bump)),
+  has_one = fee_beneficiar,
+)]
+pub state: Account<'info, State>,
+...
+Recommendation
+  #[account(
+  constraint = Pubkey::create_program_address(
+  &[State::SEED, &[state.state_bump]],
+  &settings::ID
+  ).eq(&Ok(state.key())),
+  has_one = fee_beneficiar,
+)]
+pub state: Account<'info, State>,
+...
+===========================================================================
+M2: Using API calls instead of SysVar
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: **/* Type: Sysvar account
+Description
+As of solana-program version 1.6.5, sysvars can also be accessed without
+being passed into an entrypoint as an account. It improves security (no need
+for additional checks) and performance (smaller transactions).
+Recommendation
+self.state.state.check_confirmation_adequacy(
+  &Clock::get()?, // instead of `&self.clock`
+  self.signature_storage.verify_and_iter(
+  signature_storage_key,
+  &settings::ID,
+  &submission_id.to_bytes(),
+  )?,
+  )?;
+===========================================================================
+M3: Extra SEED during checking
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: debridge/src/lib.rs, L#108 Type: Account
+constraint
+Description
+BridgeFeeInfo::SEED missing during a creation of bridge_fee account at
+settings/src/lib.rs [loc: 696]. Use BridgeFeeInfo::SEED in the initialization
+of the bridge_fee account.
+===========================================================================
+M4: Comparing bad PubKeys
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: debridge/src/lib.rs, L#113 Type: Account
+constraint
+Description
+Bad PubKeys used for a constraint check. Use bridge_fee.key() instead of
+chain_support_info.key().
+===========================================================================
+M5: Badly calculated rent exempt for one day
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: settings/src/lib.rs, L#353-355 Type: Rent
+Description
+The comment in the code says that signatures should be stored for one day,
+but the code calculates an hour_rent. In addition, the calculation uses
+subtraction instead of division. Use a simple division for calculating day_rent
+instead of checked_sub(). Instead of calling two times checked_sub(), you
+should calculate rent for one day as year_rent / 365.
+/// Temporary storage for signatures
+/// Stores signatures for one day. Access is obtained by a signed message
+bytes
+/// [`OraclesKeys`] inside account data
+===========================================================================
+M6: BridgeCtx::staking_wallet bad constraint
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: debridge/src/lib.rs, L#74 Type: Type
+Description
+For Mint Bridge it belongs to a fee_beneficiar. For Send Bridge it is owned by
+Self::mint_authority. But in BridgeCtx, it is checked whether an owner is a
+bridge. In our opinion, the validation of the owner should depend on the type
+of bridge.
+===========================================================================
+L1: Typos in several places in code
+Low severity issue
+Impact: Low Likelihood: Low
+Target: settings/src/state.rs,
+settings/src/lib.rs
+Type: Code smell
+Description
+Fix the typos for all occurrences:
+• subsmission → submission
+• transfered → transferred
+• old_reserbed_bps → old_min_reserved_bps
+===========================================================================
+L2: Bad naming conventions
+Low severity issue
+Impact: Low Likelihood: Low
+Target: **/* Type: Code smell
+Description
+Use better naming:
+• is_work_now → is_working
+• is_exists → exists
+===========================================================================
+L3: NewTypes or type aliases for primitive types
+Low severity issue
+Impact: Low Likelihood: Low
+Target: **/* Type: Code smell
+Description
+Use NewTypes or type aliases for primitive types to increase readability and
+reliability.
+pub old_reserbed_bps: u64,
+pub bridge_id: [u8; 32],
+pub collected_fee: u64,
+Recommendation
+pub old_reserbed_bps: BasisPoints,
+pub bridge_id: BridgeId,
+pub collected_fee: Lamports,
+===========================================================================
+L4: Missing or Unused code
+Low severity issue
+Impact: Low Likelihood: Low
+Target: settings/src/event.rs, L#91 Type: Code smell
+Description
+Missing Instruction should be added or unused code should be removed:
+• Unused event BridgeFeeInfoUpdated or there’s a missing instruction
+update_fee_bridge_info.
+===========================================================================
+L5: Unused accounts
+Low severity issue
+Impact: Low Likelihood: Low
+Target: debridge/src/lib.rs,
+settings/src/lib.rs
+Type: Unused account
+Description
+Unused accounts unnecessarily increase the size of a transaction and should
+be removed:
+BridgeCtx::spl_token_program
+• Just set it in the AmountContextBuilder structure and then never use it.
+• It also lacks a check to see if it is a token program.
+BridgeCtx::system_program
+• Also missing a check if it is a system program (account not used so it is
+not critical).
+===========================================================================
+L6: Unconstrained authority
+Low severity issue
+Impact: Low Likelihood: Low
+Target: debridge/src/lib.rs, L#118 Type: Account
+constraint
+Description
+The role of this authority is not clear, except that it signs the transaction, it is
+not used anywhere else. It is not necessary. Better naming it might be
+appropriate.
+===========================================================================
+L7: Using of ProgramAccount struct
+Low severity issue
+Impact: Low Likelihood: Low
+Target: debridge/src/lib.rs,
+settings/src/lib.rs
+Type: Type
+Description
+Use Account instead of ProgramAccount as advised by the Anchor framework
+author.
+===========================================================================
+L8: Add extra optimizations in Cargo.toml
+Low severity issue
+Impact: Low Likelihood: Low
+Target: Cargo.toml Type: Compiler
+settings
+Description
+Add more optimizations to Cargo.toml:
+[profile.release]
+lto = true
+opt-level = 's' // or 'z' or 3
+===========================================================================
+L9: Use the latest stable Rust version (1.56)
+Low severity issue
+Impact: Low Likelihood: Low
+Target: **/* Type: Rust version
+Description
+Use the latest stable Rust version (1.56).
+===========================================================================
+L10: Consider more pedantic clippy rules
+Low severity issue
+Impact: Low Likelihood: Low
+Target: Type: Lints
+Description
+Consider using a command line:
+cargo clippy --workspace -- -W clippy::pedantic -W clippy::nursery -W
+clippy::cargo
+===========================================================================
+Appendix A: Revision 2
+Between November 22, 2021 and December 3, 2021, Ackee Blockchain
+reviewed DeBridge’s fixes for the issues identified in this report.
+All issues but M1 were correctly fixed. Four new additional issues were found.
+The following table summarizes the re-audit.
+Fix log
+===========================================================================
+M1F: Use create_program_address instead of
+find_program_address
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: M1: Use
+create_program_address
+instead of
+find_program_address
+Type: Compute budget
+Description
+There are still several places where create_program_address with BUMP can be
+used instead of find_program_address on-chain:
+• setting/src/lib.rs [loc: 1039]
+• setting/src/bridge.rs [loc: 459]
+===========================================================================
+H4: Protocol doesn’t collect native fix fee
+High severity issue
+Impact: Medium Likelihood: High
+Target: debridge/src/state.rs, L#177 Type: Application logic
+Description
+The fix fee is not transferred to the fee_beneficiar wallet if fix fees are
+charged in a native asset. We believe it should be accumulated to
+execution_fee or it should happen in the take_native_fix_fee function.
+Go back to Fix log
+===========================================================================
+L11: Mistakes in documentation
+Low severity issue
+Impact: Low Likelihood: Low
+Target: settings/src/lib.rs,
+debridge/src/lib.rs
+Type: Documentation
+Description
+Fix mistakes in the documentation:
+• excess → minimum
+• fee_beneficiar → stop_tap
+• not used depth parameter
+• staking_wallet doesn’t belong to fee_beneficiar
+• not used submission_bump
+Go back to Fix log
+===========================================================================
+L12: Ununified approach to system accounts
+constraint
+Low severity issue
+Impact: Low Likelihood: Low
+Target: Type: Account
+constraint
+Description
+Unify the system program constraints.
+#[account(address = system_program::ID)]
+system_program: AccountInfo<'info>
+Recommendation
+pub system_program: Program<'info, System>
+Go back to Fix log
+===========================================================================
+L13: Wrongly used range literal
+Low severity issue
+Impact: Low Likelihood: Low
+Target: signature-verifier/src/lib.rs,
+L#43
+Type: Code smell
+Description
+The lower number should be on the left side of the range operator.
+Alternatively, refactor not to use the range operator with a map if the depth
+param will always be 1.
+===========================================================================
+Appendix B: Complementary audit -
+Crates
+Between July 25, 2022, and August 12, 2022, Ackee Blockchain performed a
+complementary audit of Crates modules.
+The following table summarizes found issues.
+Audit crates
+===========================================================================
+I1C: Deprecated constant usage
+Low severity issue
+Impact: Low Likelihood: N/A
+Target: crates/solana pubkey/src/lib.rs
+Type: Code smell
+Description
+In the try_find_program_address function on the line 251. There is a construct
+let mut bump_seed = [std::u8::MAX]; the use of std::u8::MAX is deprecated
+and the u8::MAX should be used.
+===========================================================================
+W1C: Underflow/overflow
+Impact: Warning Likelihood: N/A
+Target: crates/crypto/src/u256.rs Type: Arithmetic
+Description
+Custom implementation of add(), sub(), mul(), pow() for a 256-bit unsigned
+integer overflow. The program won’t panic, but the variable will have a value
+that probably isn’t what you were expecting it to have. The issue cannot be
+exploited given the current code but could be a security vulnerability if these
+were to change.
+===========================================================================
+Appendix C: Revision 2.3
+In March, 2023, Ackee Blockchain reviewed DeBridge’s fixes for the issues
+identified in this report.
+All issues were correctly fixed.
+The following table summarizes the fix-audit.
+Fix log
+===========================================================================

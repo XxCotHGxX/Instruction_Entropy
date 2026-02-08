@@ -1,0 +1,155 @@
+========================================================================
+Finding #1: Inconsistent iteration statement syntax
+Severity : Low
+Description:
+The iteration statements in the codebase were inconsistent in syntax, which can affect code readability and maintainability.
+
+Recommendation:
+Standardize the syntax of iteration statements across the codebase for clarity and maintainability.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #2: Hardcoded token index
+Severity : Low
+Description:
+A token index was hardcoded in the contract, which reduces flexibility and can lead to potential issues if the token list changes.
+
+Recommendation:
+Use dynamic referencing or configuration files instead of hardcoded values.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #3: Confusing modifier naming
+Severity : Low
+Description:
+Modifiers in the contract were given names that could be misinterpreted, leading to potential developer confusion.
+
+Recommendation:
+Rename modifiers to reflect their function clearly and unambiguously.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #4: Unused virtual keyword
+Severity : Medium
+Description:
+The keyword "virtual" was used in some function declarations unnecessarily, which can mislead developers into thinking the function is intended to be overridden.
+
+Recommendation:
+Remove the "virtual" keyword from functions not meant to be overridden.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #5: Public functions can be external
+Severity : Medium
+Description:
+Several functions declared as public could be declared as external to save gas.
+
+Recommendation:
+Change function visibility from public to external where appropriate.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #6: State variable could be local
+Severity : Medium
+Description:
+A state variable was declared but only used locally within a function, unnecessarily increasing storage costs.
+
+Recommendation:
+Declare such variables locally within the function scope to optimize for gas.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #7: Missing const
+Severity : Medium
+Description:
+Some values that are not intended to be changed were not marked as constant.
+
+Recommendation:
+Use the `constant` keyword for immutable variables to improve readability and optimize gas usage.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #8: Unused variables
+Severity : Medium
+Description:
+There were variables declared but never used, which can confuse developers and increase bytecode size.
+
+Recommendation:
+Remove any unused variables.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #9: Code duplication
+Severity : Medium
+Description:
+The codebase had multiple instances of duplicated code blocks.
+
+Recommendation:
+Refactor the code to remove duplication and improve maintainability.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #10: Interface issues
+Severity : Medium
+Description:
+Issues were identified with interface definitions that could affect contract interoperability.
+
+Recommendation:
+Revise interface definitions to ensure they align with implementation contracts.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #11: Unintended feature – Renounce ownership
+Severity : Medium
+Description:
+An unintended renounce ownership feature could lead to the loss of contract control.
+
+Recommendation:
+Review and control access to ownership renouncement carefully.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #12: Management fee rewriting
+Severity : High
+Description:
+The management fee variable could be rewritten inappropriately, which could lead to loss of funds or unfair fee settings.
+
+Recommendation:
+Add restrictions and checks before allowing changes to the management fee.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #13: Bug in the logic – wrong pool id
+Severity : Critical
+Description:
+There was a critical bug involving incorrect pool IDs which could misroute user funds.
+
+Recommendation:
+Fix the logic to correctly handle pool IDs.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================
+Finding #14: Rewriting deposit amounts
+Severity : Critical
+Description:
+Deposit amounts could be rewritten in an unintended way, which could be exploited to manipulate funds.
+
+Recommendation:
+Ensure the correctness and immutability of user deposit data.
+
+Repository
+URL: https://github.com/ZunamiProtocol
+========================================================================

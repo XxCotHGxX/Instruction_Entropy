@@ -1,0 +1,76 @@
+Repository URL: https://github.com/safe-global/safe-modules/blob/main/contracts/modules/social_recovery/SocialRecoveryModule.sol
+Full commit hash: 113d3c059e039e332637e8f686d9cbd505f1e738
+========================================================================
+Findings Summary:
+==================
+M1: Other modules can be used to gain ownership
+of the wallet
+Medium severity issue
+Impact: High Likelihood: Low
+Target: SocialRecoveryModule.sol,
+GuardianStorage.sol
+Type: Logic error
+Description
+The GuardianStorage is a separate contract that stores the guardian
+addresses. The SocialRecoveryModule contract is interacting with the
+storage with external calls. These calls are restricted with the authorized
+modifier to allow only calls for the wallet from the wallet.
+Listing 1. SocialRecoveryModule.addGuardianWithThreshold
+function addGuardianWithThreshold(address _wallet, address _guardian, uint256
+_threshold) external authorized(_wallet) {
+  guardianStorage.addGuardianWithThreshold(_wallet, _guardian, _threshold);
+}
+The GuardianStorage public entrypoint is then accessed from the module.
+Listing 2. GuardianStorage.addGuardianWithThreshold
+function addGuardianWithThreshold(address _wallet, address _guardian, uint256
+_threshold) external onlyModule(_wallet) {
+  ...
+}
+The call succeeds because of the onlyModule modifier.
+Listing 3. GuardianStorage.onlyModule
+modifier onlyModule(address _wallet) {
+  // solhint-disable-next-line reason-string
+  require(ISafe(payable(_wallet)).isModuleEnabled(msg.sender), "GS: method
+only callable by an enabled module");
+  _;
+}
+However, the onlyModule modifier does not check if the module is exactly the
+SocialRecoveryModule. As a result, any address that is registered in the Safe
+wallet as a module can be used to add, remove guardians or change the
+threshold. The address with its own set of guardians can recover the wallet
+and gain ownership.
+Exploit scenario
+Bob’s Safe has enabled some module that is restricted to very specific
+operations (when calling execTransactionFromModule) but it is possible to call
+other contracts on behalf of the module. Alice can’t use the module to exploit
+Bob, because the module’s public entrypoints that are calling
+execTransactionFromModule on Bob’s Safe are well protected. However, Alice
+notices that Bob has also enabled the SocialRecoveryModule as a module.
+Alice then uses the first module to change the GuardianStorage and then
+gains access to the wallet with the SocialRecoveryModule.
+
+Recommendation
+Restrict the usage of the GuardianStorage only to the SocialRecoveryModule.
+Fix 1.1
+The issue is fixed by inheriting directly from the GuardianStorage contract.
+===========================================================================
+W1: Confirmed hashes stay in storage
+Impact: Warning Likelihood: N/A
+Target: SocialRecoveryModule.sol Type: Logic error
+Description
+When Guardian confirms a recovery, it means he will confirm a specific set of
+new owners and a threshold for a given wallet. Also, the nonce is included.
+However, nonce is not incremented until the recovery is executed. It means
+the nonce can be the same for years, but guardians and threshold can
+change over time.
+The possible scenario is that Guardian A confirms a recovery at a time when
+the guardian threshold is set to 3. After that, he’s revoked by Owner. One year
+passes and the Guardian A is added again, but this time threshold is 1. So
+immediately anyone can execute the recovery.
+
+Recommendation
+Be aware of this behavior, inform users about it or implement additional
+checks (eg. time-based) to prevent this type of misuse.
+Fix 1.1
+The issue is fixed by adding the possibility for Owner to increment the nonce
+and thus invalidate the current epoch without performing a recovery.

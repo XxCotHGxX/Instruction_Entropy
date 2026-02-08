@@ -1,0 +1,157 @@
+project_id,requirement,e_sub,k_sub,success,ln_wage_eq,ai_score
+public_001,3D model file with marquise-cut diamond (.3dm format),0.0,0.0,0.15,1.7147984280919266,0.1134031031726403
+public_001,JPEG Images (minimum 1280x1280 pixels resolution):,0.0,0.0,0.15,1.7147984280919266,0.1134031031726403
+public_001,"Rose gold version, front view (.jpg format)",0.0,0.0,0.15,1.7147984280919266,0.1134031031726403
+public_001,"Rose gold version, side angle view (.jpg format)",0.0,0.0,0.15,1.7147984280919266,0.1134031031726403
+public_001,"Yellow gold version, front view (.jpg format)",0.0,0.0,0.15,1.7147984280919266,0.1134031031726403
+public_001,"Yellow gold version, side angle view (.jpg format)",0.0,0.0,0.15,1.7147984280919266,0.1134031031726403
+public_002,"Audience: Homeowners, Real estate developers, Facility managers, Landscapers, Anyone in need of tree",0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_002,"Tone: Professional yet friendly, instilling confidence and reliability",0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_002,Length: Around 60 seconds,0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_002,"Visual Preference: Bold font, natural color palette (greens, browns, light blues), nature-related ic",0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_002,"Video style: Flat design / modern style, subtle transitions and motion graphics, clean 2D animation,",0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_002,We start with a thorough consultation to understand your tree care needs.,0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_002,"Whether it's shaping your tree, pruning it, bracing it, removing a stump, or grinding it, our expert",0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_002,We create a customized care plan tailored to each tree's specific requirements.,0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_002,"Using the latest technology and techniques, our skilled team performs the work efficiently and safel",0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_002,"At Skyline Tree Services, safety is our top priority. We ensure all precautions are taken to protect",0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_002,"Once the job is done, we clean up thoroughly, leaving your space as beautiful as we found it.",0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_002,Raw voiceover audio file (`inputs/VoiceOver.wav`),0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_002,"2D animated video with audio from the provided voiceover (MP4, 1080p resolution)",0.0,0.0,0.1,1.6739764335716716,0.1313807166198247
+public_003,Water droplet,0.0,0.0,0.02,3.871201010907891,0.3100317881564861
+public_003,Barley grain,0.0,0.0,0.02,3.871201010907891,0.3100317881564861
+public_003,Beer can with open pull tab,250.67961140796442,22.808284823045398,0.02,3.871201010907891,0.3100317881564861
+public_003,Mug of beer,0.0,0.0,0.02,3.871201010907891,0.3100317881564861
+public_003,Barrel of beer,0.0,0.0,0.02,3.871201010907891,0.3100317881564861
+public_003,"Platform: Web-based, compatible with all major browsers (Chrome, Safari, Firefox, Edge).",61.58761302828914,17.390549024040887,0.02,3.871201010907891,0.3100317881564861
+public_003,Cross-Platform Compatibility: Works seamlessly on desktop and mobile (iOS and Android) with responsi,105.07395052710105,22.637438880466664,0.02,3.871201010907891,0.3100317881564861
+public_003,"Controls: Supports both touch gestures (tap, swipe) and mouse clicks for flexible gameplay.",234.30609528043544,21.58069848563117,0.02,3.871201010907891,0.3100317881564861
+public_003,"Quick Load Times: Lightweight assets and optimized code to ensure rapid load speeds, even on low-end",632.4403593603398,81.90513507789296,0.02,3.871201010907891,0.3100317881564861
+public_003,Instant Playability: No downloads required; players can start immediately by opening the game in the,628.6700259733398,68.61615163650193,0.02,3.871201010907891,0.3100317881564861
+public_003,"Implementation: The game should be implemented directly using HTML, CSS, and JavaScript. The develop",498.7038845283653,72.37848860587965,0.02,3.871201010907891,0.3100317881564861
+public_003,Physics and Collisions: Objects should obey basic physics. They should fall naturally within a defin,522.1699197982724,75.56309071436563,0.02,3.871201010907891,0.3100317881564861
+public_003,File Size: The total file size should be kept under 5 MB to ensure fast loading.,406.81205418740365,47.72146330685274,0.02,3.871201010907891,0.3100317881564861
+public_003,"Object Merging: Players combine matching items to generate higher-level objects, aiming to reach the",446.71609246085865,65.16037830095495,0.02,3.871201010907891,0.3100317881564861
+public_003,Score Maximization: Each successful merge scores points. Merging high-level items gives more points.,572.6479682928456,49.591202707515436,0.02,3.871201010907891,0.3100317881564861
+public_003,"Limited Space: Players must manage space carefully within a defined container—if the box fills up, t",670.8990210580358,70.1264796010527,0.02,3.871201010907891,0.3100317881564861
+public_003,"In general, higher-level items should be physically larger than smaller items, but not always.",326.4798512727679,50.53092336172934,0.02,3.871201010907891,0.3100317881564861
+public_003,"If objects cross the top of the box, the round should end. A screen should appear on top of the game",495.40437902971803,71.89558049197852,0.02,3.871201010907891,0.3100317881564861
+public_003,Objects should have non-uniform shapes. The collision boxes should match the object shapes.,420.603334736733,45.41946123605068,0.02,3.871201010907891,0.3100317881564861
+public_003,"Container Box: Objects should fall into a clearly defined ""box"" area with visible boundaries, guidin",511.8557190902082,69.0240998086166,0.02,3.871201010907891,0.3100317881564861
+public_003,Falling Indicator: The next item should have an indicator at the bottom of the screen to show where ,449.0989360664261,56.42151538174533,0.02,3.871201010907891,0.3100317881564861
+public_003,Score Display: The score should be displayed prominently at the top of the screen.,385.85163460895694,45.526249237324095,0.02,3.871201010907891,0.3100317881564861
+public_003,"Minimalist UI: Essential elements only—score display, ""Next Item"" preview, and basic pause/reset but",429.2899929513803,62.216504066884276,0.02,3.871201010907891,0.3100317881564861
+public_003,"Cartoon-Style Graphics: Use a cute/kawaii, colorful, and cartoonish visual style with simple lines a",405.7340950044953,50.672712856139874,0.02,3.871201010907891,0.3100317881564861
+public_003,Responsive Layout: The design should adapt seamlessly for both desktop and mobile screens.,75.95789390280392,12.701024504363323,0.02,3.871201010907891,0.3100317881564861
+public_003,Background Music: The game should include relaxing background music that plays continuously during g,587.5923126813587,67.80762988240224,0.02,3.871201010907891,0.3100317881564861
+public_003,Sound Effects:,130.4196316963623,11.613853973845083,0.02,3.871201010907891,0.3100317881564861
+public_003,A satisfying sound effect should play when objects are dropped into the container.,249.1460460095565,44.40988199270498,0.02,3.871201010907891,0.3100317881564861
+public_003,"A distinct, gratifying merging sound should play when two objects combine.",249.1460460095565,44.40988199270498,0.02,3.871201010907891,0.3100317881564861
+public_003,"These sounds should enhance the feedback of each action, creating an engaging and satisfying player ",265.21181302289034,32.15729247176559,0.02,3.871201010907891,0.3100317881564861
+public_003,Touch and Mouse Support: The game should support both touch gestures and mouse input to provide a sm,674.8385320088789,76.59637935302351,0.02,3.871201010907891,0.3100317881564861
+public_003,Responsive Design: The layout should adjust for screen size changes to ensure accessibility and comf,175.29842887250337,36.3801792945073,0.02,3.871201010907891,0.3100317881564861
+public_004,"Silicone, airpod-like tips",0.0,0.0,0.05,2.120263536200091,0.1313807166198247
+public_004,Stem of earbud swaps out for a replaceable battery,0.0,0.0,0.05,2.120263536200091,0.1313807166198247
+public_004,Sleek charging case,0.0,0.0,0.05,2.120263536200091,0.1313807166198247
+public_004,L/R indicator decal,0.0,0.0,0.05,2.120263536200091,0.1313807166198247
+public_004,Earbuds image in `inputs/earbuds_back.jpg`,0.0,0.0,0.05,2.120263536200091,0.1313807166198247
+public_004,Earbuds image in `inputs/earbuds_front.jpg`,0.0,0.0,0.05,2.120263536200091,0.1313807166198247
+public_004,Earbuds image in `inputs/earbuds_top.jpg`,0.0,0.0,0.05,2.120263536200091,0.1313807166198247
+public_004,Image demonstrating replaceable battery functionality in `inputs/replaceable_battery.jpg`,0.0,0.0,0.05,2.120263536200091,0.1313807166198247
+public_004,Image of portable charging case in `inputs/charging_case.jpg`,0.0,0.0,0.05,2.120263536200091,0.1313807166198247
+public_004,Five short clips showcasing the different features of the earbuds (MP4 format),0.0,0.0,0.05,2.120263536200091,0.1313807166198247
+public_004,"3D models for the earbuds and case (e.g., .fbx format)",0.0,0.0,0.05,2.120263536200091,0.1313807166198247
+public_005,Mushroom Head Ventilation:,0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,"Commonly used in RVs, motorhomes, and trailers.",0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,"Installed on roofs to allow fresh air in and release excess moisture and indoor air, preventing mold",0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,Dimensions:,0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,"Bottom plate diameter: 18"", with 7 bolt holes - Bolt 5/16'' x 3 3/8''",0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,"Middle plate diameter: 17"", with 3 bolt holes - Bolt 3/16'' x 1 1/8''",0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,"Mushroom head cover diameter: 18"", height: 9"".",0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,Whirlybird Ventilation:,0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,"Recognizable by its dome shape, it is a wind-powered system used in warmer climates.",0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,Reduces high temperatures in summer and removes excess humidity in winter.,0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,"The dome has engineered fins that rotate in the wind, creating a vacuum to extract hot air.",0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,"Bottom plate diameter: 18"", with 7 bolt holes - Bolt 5/16'' x 3 3/8''",0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,"Middle plate diameter: 17.5"", with 3 bolt holes - Bolt 3/16'' x 1 1/8''",0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,"Dome diameter: 16"", height: 9.5"".",0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,A photo of the mushroom head vent type in `inputs/Mushroom Head Ventilation Reference.png`,0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,A photo of the whirlybird vent type in `inputs/Whirlybird Ventilation Reference.png`,0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,"Component Geometry: Design logical, functional shapes (e.g., raised necks, flanges) to create a stac",0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,Bolt Placement: Use standard Bolt Circle Diameters (BCDs) appropriate for the given plate diameters.,0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,Mushroom Head Vent Internals: No need to model the internals. Just model the mounting and housing fo,0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,"Whirlybird Internals: Model a simplified, standard internal assembly (axle, bracing, etc.) to ensure",0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,3D CAD Models in .stp/.step format of the Mushroom Head Vent and Whirlybird Vent,0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,3D CAD Models in .stp/.step format of the exploded Mushroom Head Vent and Whirlybird Vent,0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_005,Exploded view assembly drawings (PDF format) showing bolt sizes and indicating component names.,0.0,0.0,0.03,3.1135153092103742,0.2220527138174632
+public_006,Bathroom: 3 interior design options for the existing bathroom (wall-hung WC in the indicated locatio,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,"Apartment: 6 furniture layout options; pick one ""final"" option for detailed plans.",0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,"Cadastral notation is ""room no. / gross area (meters squared)"".",0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Rooms in cadastral plan:,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,"Rooms 27, 28, 29: habitable rooms",0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Room 26: kitchen,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Room 26a: living room,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Room 26b: veranda,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Room 25: bathroom,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Room 24: hallway,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,"There is a door from the living room to the veranda, as shown in `inputs/additional measurements.jpg",0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Dimensions in deliverables are design intent; contractor to verify all on site.,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Cadastral floor plan (metric): `inputs/cadastral floor plan.jpg`,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Zoomed bathroom plan: `inputs/bathroom.jpg`,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Site photos: `inputs/bathroom_photos/photo_#_y.jpg`,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,"Additional measurements of the bathroom, living room, and veranda: `inputs/additional measurements.j",0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Bathroom interior design - 3 options:,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,"Renders: At least 3 views per option, at least 1200 pixels on long edge. Include one render from the",0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Material board: one combined sheet per option showing the renders + finish swatches,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Wall finish images: high-res JPGs of each finish used.,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,3D source: supply native file (SKP),0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Design intent only: no engineering calcs; contractor/MEP to verify.,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Furniture layouts - 6 options:,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,"One PDF floor plan per option, imperial dimensions (feet-inches) for key clearances and furniture si",0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,One consolidated DWG containing all options.,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,"""Final"" chosen furniture option; extra plans:",0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,"RCP & lighting plan: show ceiling levels, fixture symbols, mounting heights, and a legend (PDF)",0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Toilet installation plan: locate the wall-hung toilet and built-in floor drain with horizontal dimen,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,"Electrical equipment layout: outlets, switches, appliance points, mounting heights, legend (circuiti",0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,Floor finishes plan: hatch/legend showing material zones and transition/threshold locations (PDF),0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,CAD trace of cadastral plan:,0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_006,"Provide a clean DWG + PDF. Trace to scale, align walls, doors, windows",0.0,0.0,0.08,4.27874728521988,0.2066579487388623
+public_007,Finding Number,7891.592047009354,321.0783371212373,0.02,1.0818051703517284,0.2219611271797774
+public_007,"Title (e.g. Requirements Violation, Documentation Mismatch)",778.5734614183427,145.7866371838505,0.02,1.0818051703517284,0.2219611271797774
+public_007,Description,12507.877465499136,321.0783371212373,0.02,1.0818051703517284,0.2219611271797774
+public_007,Recommendation,7891.592047009354,321.0783371212373,0.02,1.0818051703517284,0.2219611271797774
+public_007,Repository URL,7540.057657686069,311.28972437306203,0.02,1.0818051703517284,0.2219611271797774
+public_008,B-flat trumpet,0.0,0.0,0.12,2.8134107167600364,0.1365966167965151
+public_008,Tenor saxophone,0.0,0.0,0.12,2.8134107167600364,0.1365966167965151
+public_008,Double bass,0.0,0.0,0.12,2.8134107167600364,0.1365966167965151
+public_008,The full score of the arrangement (PDF and MusicXML formats),0.0,0.0,0.12,2.8134107167600364,0.1365966167965151
+public_008,A MIDI export of the score,0.0,0.0,0.12,2.8134107167600364,0.1365966167965151
+public_008,A recording / audio rendering of the arrangement (MP3),0.0,0.0,0.12,2.8134107167600364,0.1365966167965151
+public_009,Overview: The dashboard should include an overview map showing each country's overall happiness scor,102.27058135080881,16.47246578621417,0.05,3.9512437185814275,0.3571632760219043
+public_009,Data: use the provided data as the sole source for country scores and component metrics.,102.27058135080881,16.47246578621417,0.05,3.9512437185814275,0.3571632760219043
+public_009,Map: display each country shaded on a gradient that reflects its overall happiness score; add hover ,226.35494942577682,18.553048031668947,0.05,3.9512437185814275,0.3571632760219043
+public_009,"Detailed chart: place a second visual (e.g., stacked bar or spider chart) beside or beneath the map.",63.982700750929915,14.595500578075427,0.05,3.9512437185814275,0.3571632760219043
+public_009,"Design: intuitive, user-friendly, and align with the theme of happiness.",35.56243275791295,6.527830806831497,0.05,3.9512437185814275,0.3571632760219043
+public_010,Put everything into IEEE conference LaTeX format (two-column layout),159.02848093799713,24.91107690976951,0.03,1.7635885922613586,0.2647822550496732
+public_010,"Label all the math as equations (1), (2), (3), etc.",117.32054849817074,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,"Add captions for all figures - if the content is clear from context, write descriptive captions; oth",96.16146665460715,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,"Integrate figures referenced in the project outline document (some input figures have duplicates, us",119.92835293806455,24.91107690976951,0.03,1.7635885922613586,0.2647822550496732
+public_010,Include the MATLAB code with proper formatting,163.07262945514918,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,Format the mathematical derivations and transfer functions proprely,141.41568393196192,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,"`inputs/3d printer.docx` - Project outline including introduction, methodology, and structure for th",99.70018259695436,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,"`inputs/E1.pdf` - Handwritten mathematical derivations for DC motor modeling, transfer functions, an",105.34733815458219,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,`inputs/Figures/` - Complete set of simulation results and technical diagrams (69 files total):,0.0,0.0,0.03,1.7635885922613586,0.2647822550496732
+public_010,"DC motor system block diagrams (fig1.png, model.pdf)",128.49285091106245,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,"Root locus plots for X, Y, Z motor control design",132.20533926470907,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,Step response plots for each motor axis,163.07262945514918,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,"Lead compensator parameter screenshots (comp_X.PNG, comp_Y.PNG, comp_Z.PNG)",0.0,0.0,0.03,1.7635885922613586,0.2647822550496732
+public_010,Square wave response plots,0.0,0.0,0.03,1.7635885922613586,0.2647822550496732
+public_010,"3D printing simulation outputs for four test geometries (rectangle, cylinder, cube, pyramid)",113.19436085578779,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,"Error plots for each axis (X, Y, Z) and each geometry, both with and without applied disturbance",108.14882013727892,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,Comparative analysis plots showing system performance with and without disturbance forces,132.20533926470907,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,Complete LaTeX project including:,38.45382216938094,4.388213065141091,0.03,1.7635885922613586,0.2647822550496732
+public_010,Main LaTeX source file with all content formatted,185.64329027054347,24.91107690976951,0.03,1.7635885922613586,0.2647822550496732
+public_010,IEEE conference template files,253.44251980686568,24.91107690976951,0.03,1.7635885922613586,0.2647822550496732
+public_010,All the figures and images used in the paper,147.26925881339267,21.89743030132345,0.03,1.7635885922613586,0.2647822550496732
+public_010,Compiled PDF output,294.2376535893041,24.91107690976951,0.03,1.7635885922613586,0.2647822550496732
+public_010,"Final PDF in IEEE conference format (approximately 14 pages, two-column layout)",143.97080292443607,24.91107690976951,0.03,1.7635885922613586,0.2647822550496732

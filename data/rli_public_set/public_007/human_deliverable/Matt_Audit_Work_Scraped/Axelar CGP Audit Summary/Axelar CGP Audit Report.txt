@@ -1,0 +1,284 @@
+Repository URL: https://github.com/axelarnetwork/axelar-cgp-solidity/
+Full commit hash: 1cd26b
+========================================================================
+Findings Summary:
+==================
+M1: Dangerous ownership transfer
+Medium severity issue
+Impact: High Likelihood: Low
+Target: Upgradable.sol, Ownable.sol Type: Data validation
+Listing 1. Excerpt from Upgradable.transferOwnership
+25 function transferOwnership(address newOwner) external virtual
+  onlyOwner {
+26 if (newOwner == address(0)) revert InvalidOwner();
+27 
+28 emit OwnershipTransferred(newOwner);
+29 // solhint-disable-next-line no-inline-assembly
+30 assembly {
+31 sstore(_OWNER_SLOT, newOwner)
+32 }
+33 }
+Listing 2. Excerpt from Ownable.transferOwnership
+21 function transferOwnership(address newOwner) external virtual
+  onlyOwner {
+22 if (newOwner == address(0)) revert InvalidOwner();
+23 
+24 emit OwnershipTransferred(owner, newOwner);
+25 owner = newOwner;
+26 }
+27 }
+Description
+Multiple contracts in the codebase use the owner pattern for access control.
+Some of the contracts also allow for ownership transfer (see ownership
+transfer in Upgradeable, ownership transfer in Ownable).
+However, neither of the transfer functions has a robust verification
+mechanism for the new proposed owner. If a wrong owner address is passed
+to them, neither can recover from the error.
+Thus passing a wrong address can lead to irrecoverable mistakes.
+Exploit scenario
+The current owner Alice wants to transfer the ownership to Bob. Alice calls
+the transferOwnership function but supplies a wrong address by mistake. As a
+result, the ownership will be passed to a wrong and possibly dead address.
+Recommendation
+One of the common and safer approaches to ownership transfer is to use a
+two-step transfer process.
+Suppose Alice wants to transfer the ownership to Bob. The two-step process
+would have the following steps: Alice proposes a new owner, namely Bob. This
+proposal is saved to a variable candidate. Bob, the candidate, calls the
+acceptOwnership function. The function verifies that the caller is the new
+proposed candidate, and if the verification passes, the function sets the
+caller as the new owner. If Alice proposes a wrong candidate, she can change
+it. However, it can happen, though with a very low probability that the wrong
+candidate is malicious (most often it would be a dead address). An
+authentication mechanism can be employed to prevent the malicious
+candidate from accepting the ownership.
+===========================================================================
+M2: Unauthorized sending of tokens
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: AxelarDepositServiceProxy.so
+l, AxelarDepositService.sol,
+ReceiverImplementation.sol
+Type: Unauthorized
+token transfer
+Listing 3. Excerpt from AxelarDepositService.sendTokenDeposit
+89 new DepositReceiver{ salt: salt }(
+90 abi.encodeWithSelector(
+91 ReceiverImplementation.receiveAndSendToken.selector,
+92 refundAddress,
+93 destinationChain,
+94 destinationAddress,
+95 tokenSymbol
+96 )
+97 );
+Listing 4. Excerpt from ReceiverImplementation.receiveAndSendToken
+60 uint256 amount = IERC20(tokenAddress).balanceOf(address(this));
+61 
+62 if (amount == 0) revert NothingDeposited();
+63 
+64 // Sending the token trough the gateway
+65 IERC20(tokenAddress).approve(gateway, amount);
+66 IAxelarGateway(gateway).sendToken(destinationChain,
+  destinationAddress, symbol, amount);
+Description
+One of the DepositService functionalities is creating new deposit addresses.
+Users can deposit to those addresses and later send the deposits to other
+chains.
+The DepositService also allows refunding the tokens sent to the deposit
+addresses, e.g., in case of supplying a wrong amount or routing parameters.
+Another functionality of the service is sending the tokens that are in the
+deposit addresses. For that the sendTokenDeposit function is used. The
+function creates a new DepositReceiver which in turn invokes the
+receiveAndSendToken function. The latter one handles the functionality to
+transfer the tokens from the deposit address to the gateway.
+Neither of the mentioned functions contains authorization techniques to
+prevent anyone from sending the tokens on behalf of the user that deposited
+the tokens. And thus, the user that deposits the tokens can be prevented
+from using the refund functionality as a malicious third-party can execute
+sending of the tokens.
+Exploit scenario
+Alice creates a new deposit address and sends tokens to it. Bob copies Alice’s
+parameters to create the deposit address and calls the function
+sendTokenDeposit. Alice realizes that she used a wrong destinationAddress and
+wants to refund the deposit. However, the tokens are already sent, and thus a
+refund is not possible.
+The exploit is showcased in solidity as a foundry test.
+Recommendation
+The function for sending tokens should not be permissionless. Authorization
+techniques that validate the transaction’s sender should be employed.
+===========================================================================
+W1: Usage of solc optimizer
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Compiler
+configuration
+Description
+The project uses solc optimizer. Enabling solc optimizer may lead to
+unexpected bugs.
+The Solidity compiler was audited in November 2018, and the audit concluded
+that the optimizer may not be safe.
+One recent bug was discovered in June 2022. The bug caused some assembly
+memory operations to be removed, even though the values were used later in
+the execution.
+Vulnerability scenario
+A few months after deployment, a vulnerability is discovered in the optimizer.
+As a result, it is possible to attack the protocol.
+Recommendation
+Until the solc optimizer undergoes more stringent security analysis, opt-out
+using it. This will ensure the protocol is resilient to any existing bugs in the
+optimizer.
+===========================================================================
+W2: Stealing tokens from Deposit Proxy
+Impact: Warning Likelihood: N/A
+Target: AxelarDepositServiceProxy.so
+l
+Type: Unauthorized
+token transfer
+Description
+The AxelarDepositServiceProxy uses a delegatecall to the implementation
+contract; thus, the execution happens in its context. The implementation
+contract is AxelarDepositService, which inherits from ReceiverImplementation.
+ReceiverImplementation implements some functions that handle token
+transfers. Those token transfer functions are meant to be used in the
+context of DepositReceiver, which should use a delegatecall. Those functions,
+mainly the receiveAndSendToken function, are declared external
+receiveAndSendToken can be called directly through the proxy contract
+without creating the DepositReceiver. As a result, this function executes in
+the context of the proxy and can be used to steal funds from the proxy
+contract.
+In the current state of the protocol, this is not an issue because the
+AxelarDepositServiceProxy should not hold any tokens.
+Exploit scenario
+After an upgrade, the DepositService has to hold some tokens. An attacker
+notices this fact and creates a simple malicious contract that will be
+compatible with the interface of the contracts that the service calls. Then he
+performs a call directly through the proxy to the receiveAndSendToken and
+steals the funds.
+The exploit is showcased in solidity as a foundry test.
+Recommendation
+In the current state of the protocol, this vulnerability can not be exploited
+because the service should not hold any tokens. However, this doesn’t have
+to be true for future upgrades of the contracts.
+At a minimum, this vulnerability should be acknowledged in documentation or
+in code such that is is always known to the future developer. A better
+alternative would be to employ authorization to prevent the vulnerability
+altogether.
+===========================================================================
+W3: High privileged owner and single point of
+failure
+Impact: Warning Likelihood: N/A
+Target: Upgradable.sol,
+AxelarAuthWeighted.sol
+Type: Access control
+Description
+Both the Upgradable and AxelarAuthWeighted contracts use the owner address
+for access control. In both cases, the owner is used for highly sensitive
+operations - upgrading the contract and transfering the operatorship.
+If the owner’s account was hacked or the corresponding private key lost, it
+could lead to dire consequences.
+In the case of the Upgradable contract, the compromise of the owner could
+lead to an upgrade to a new malicious contract, which could, for example,
+allow for self-destruct.
+In the case of the AxelarAuthWeighted contract, a new malicious set of
+operators could be added. Such operators could then execute various
+malicious commands.
+Recommendation
+Several protocols were already hacked because of insufficient protection of
+the owner’s private key.
+It must be ensured that the owner account corresponds to a multisig and
+that the multisig is controlled by a sufficiently large number of independent
+entities relative to the importance of the contract at hand.
+===========================================================================
+W4: Pitfalls of upgradeability
+Impact: Warning Likelihood: N/A
+Target: Upgradable.sol Type: Upgradeability
+Description
+The following notes are rather general remarks regarding the upgradeability
+system. The issues do not directly apply to the current scope; they should be
+considered relative to future upgrades of the contracts.
+Accessiblity of the setup function on implementation contract
+The setup function in the implementation contract has no access controls,
+except the check if implementation is equal to zero-address. This approach is
+safe until a mistake occurs. Such a mistake can involve calling the upgrade
+function directly on the implementation contract. Such a mistake could, for
+example, happen by accidentally switching the address of the proxy and
+implementation contract when performing a call to the upgrade function. As a
+result, the implementation address will be changed to some non-zero address.
+The severity of such a mistake would depend on the logic of the _setup(data)
+function. The reason is that now the _setup(data) function could be called by
+a malicious attacker, which could supply a malicious payload.
+Suppose that after an upgrade, the setup() function allows setting an
+owner. In that case, the attacker could set a new owner and consequently
+call upgrade() on the implementation contract, with the new implementation
+being his malicious contract, which self-destructs.
+Since the proxy has only an empty setup function and fallback, it will not be
+possible to upgrade it further, and the protocol will be stuck.
+Accessibility of state-changing function before initialization
+Additionally, it should be ensured that all non-view publicly accessible
+functions should not be accessible before initialization. If some of the
+mentioned functions performed state changes before the initialization, it
+could lead to undefined behavior and unexpected bugs.
+Recommendation
+It is recommended to ensure that the setup function on the implementation
+contract can be called only once. Additionally, it should not be callable
+(directly on the implementation contract) after the construction of the
+implementation contract (see the Programmatic approach in the
+Upgradeability Appendix). To achieve the criteria above, the use of initializer
+modifier is recommended.
+To achieve that the non-view publicly accessible functions will not be called
+before initialization, it is recommended to use the onlyInitialized() modifier.
+Both the approaches are described in more detail in the Appendix C: Theory
+of Upgradeability.
+===========================================================================
+I1: Public functions without internal calls
+Impact: Info Likelihood: N/A
+Target: AxelarDepositService.sol Type: Gas optimization,
+Coding practices
+Listing 5. Excerpt from AxelarDepositService.contractId
+237 function contractId() public pure returns (bytes32) {
+238 return keccak256('axelar-deposit-service');
+239 }
+240 }
+Description
+Some functions are declared public even though they are not called internally
+anywhere. That goes against the recommended best practices and also costs
+more gas.
+Recommendation
+If functions are not called internally, they should be declared as external.
+===========================================================================
+I2: Confusing naming of errors
+Impact: Info Likelihood: N/A
+Target: AxelarDepositService.sol Type: Coding
+practices,
+Naming
+Listing 6. Excerpt from AxelarAuthWeighted._transferOperatorship
+74 bytes32 newOperatorsHash = keccak256(params);
+75 
+76 if (epochForHash[newOperatorsHash] > 0) revert SameOperators();
+77 
+78 uint256 epoch = currentEpoch + 1;
+79 currentEpoch = epoch;
+80 hashForEpoch[epoch] = newOperatorsHash;
+81 epochForHash[newOperatorsHash] = epoch;
+Listing 7. Excerpt from AxelarAuthWeighted._validateSignatures
+111 // if weight sum below threshold
+112 revert MalformedSigners();
+113 }
+Description
+In multiple places in the codebase, confusing naming for errors is used. The
+naming often implies different issues or behavior and is thus confusing for
+the entity that reviews the code.
+The SameOperators error implies that the issue is caused by using the same
+operators. However, this isn’t the case because basic reordering of the same
+set of operators would produce a different hash which would not cause the
+error. Using the same operators is permitted, but using the same hash is not.
+The MalformedSigner error implies that the signers are malformed. However,
+this does not have to be the case. The signers can be well-formed but have
+insufficient weight.
+Errors provide an important insight into why the execution failed. They also
+provide valuable information about invariants and properties that the code
+should follow. Using vague or inaccurate naming for errors can prolong the
+debugging time and make understanding the code difficult.
+Recommendation
+Use more precise naming for the mentioned errors. From the long-term
+perspective, employ a careful approach to the naming of errors as they
+provide very valuable insight into the codebase.

@@ -1,0 +1,849 @@
+Repository URL: https://github.com/catalyst-xyz/contracts/pull/52
+Full commit hash: db0c96e97b3247fe5835abd1478a8145f46e2f69
+========================================================================
+Findings Summary:
+==================
+C1: Fake escrow can craft ACK packets with any
+messageIdentifier and withdraw all bounties
+Critical severity issue
+Impact: High Likelihood: High
+Target: IncentivizedMessageEscrow.sol
+Type: Data Validation
+Description
+The processPacket function serves as the main entry point of messages to
+IncentivizedMessageEscrow. First, the _verifyPacket function verifies the
+integrity of the received message and extracts the sender information. If an
+ACK message enters the contract, the _handleAck function is called internally.
+This function verifies if the message is from the expected escrow address on
+the destination chain, where the destination chain is the chain where the ACK
+message is generated. After this verification passes, the correct bounty
+structure is fetched from the storage. The search key is a message ID.
+However, 32 bytes of the message ID are taken from the raw message and are
+not validated. Moreover, the fee recipient address for relaying the message
+on the destination chain is also taken from the same raw message. If an
+attacker controls the escrow contract on the destination chain, they can
+craft ACK messages with IDs of packets that have not yet been
+acknowledged, drain all stored bounties and cause the Denial of Service for
+the message.
+Exploit Scenario
+Consider two chains: A and B. On both chains, escrow contracts EscrowA and
+EscrowB exist, respectively. On the chain A, an AppA application is deployed to
+communicate with AppB through the escrows. The attack scenario is the
+following:
+1. AppA sends a message to AppB through EscrowA. EscrowA takes a bounty for
+the message transfer and emits an event for the relayers with the
+generated message ID, say MSGID1, recipient information, and the payload.
+At this step, the fees are paid by AppA and stored in the escrow contract.
+2. The attacker creates and deploys a fake escrow on chain B, EvilEscrowB.
+This escrow behaves almost identically to EscrowB; however, it can create
+ACK messages with arbitrary message IDs and the fee recipient address
+set by the attacker.
+3. The attacker deploys two simple apps on A and B, EvilAppA and EvilAppB.
+EvilAppA registers itself on EscrowA using setRemoteImplementation setting
+the remote escrow on B to EvilEscrowB. A valid transmission route is
+created: EvilAppA <> EscrowA <> EvilEscrowB <> EvilAppB. The
+implementation of the apps does not matter; the only requirement is the
+implementation of the ICrossChainReceiver interface.
+4. The attacker reads the newly created message ID MSGID1 from step (1) and
+passes it to EvilEscrowB.
+5. EvilEscrowB generates an ACK message on B, setting the sender of the ACK
+as EvilAppB, the message ID to MSGID1 set by the attacker at step (4), the
+fee recipient, and the refund addresses to the attacker address on the
+chain A, and the recipient of the ACK message to AppA.
+6. A relayer, which can be either controlled by the attacker or anyone else,
+relays the message from B to A, and the payload enters the EscrowA
+contract. The _verifyPacket function validates that the message from B is
+legitimate.
+7. The _handleAck function verifies if the message to EvilAppA came from the
+expected escrow contract. Since the escrow on B was set to EvilEscrowB
+and EvilEscrowB is the sender of the ACK message, this verification is
+successful.
+8. The message ID MSGID1 is read from the obtained payload, and the
+IncentiveDescription structure is read and deleted from the _bounty
+mapping.
+9. The refund address and the destination relayer address are taken from the
+payload, too.
+10. All the fees stored in the contract in step (1) are transferred to the
+attacker.
+11. The Attacker repeats the process until all funds are drained for all
+messages not yet acknowledged.
+Recommendation
+Verify if the message ID obtained in the payload refers to the apps that
+initiated the message transmissions. Make sure you thoroughly validate the
+payload.
+Fix 1.1
+The _bounty mapping’s type was changed from mapping(bytes32 =>
+IncentiveDescription) to mapping(address fromApplication => mapping(bytes32
+destChain => mapping(bytes32 messageIdentifier => IncentiveDescription))).
+This modification allows for connecting every message ID to the sender
+application and the destination chain, resulting in the strict assignment of
+the bounty to only one route. All the functions using this mapping were
+updated to reflect the new structure. The issue was fixed in the PR#41,
+commit d50ca3a [1]
+===========================================================================
+M1: Fee recipient addresses are not validated
+against the zero address
+Medium severity issue
+Impact: High Likelihood: Low
+Target: IncentivizedMessageEscrow.sol
+Type: Data Validation
+Description
+The constructor of IncentivizedMessageEscrow sets the immutable variable
+SEND_LOST_GAS_TO to a provided one in the argument. There are no validations
+of the correctness of the provided argument. If the provided argument is the
+zero address, bad consequences may exist. The first problem is that the
+contract transfers the native token to this address. In the case of the zero
+address, the tokens will be lost for messages with fee distribution problems.
+Secondly, this will require redeployment, and if the address should be the
+same on multiple EVM chains, relayers need to keep track of multiple
+addresses and ensure the incorrect one is never used.
+The same issue is within the processPacket() function where the feeRecipient
+variable is used without validations and is directly passed to the
+_payoutIncentive function. If feeRecipient is set to bytes32(0), the tokens sent
+to this address will be lost.
+Exploit Scenario
+Assume there are three chains: A, B and C; they all support the CREATE2 EVM
+opcode. On chains A and B, there are two escrow deployments, EscrowA and
+EscrowB. Both escrows are deployed using CREATE2 by the same deployer, and
+with the same bytecode and salt, so both escrows share the same EVM
+address. The deployer integrates C into the system and runs a script that
+should deploy EscrowC. However, there is a bug in the deployment script, and
+accidentally, EscrowC is deployed with SEND_LOST_GAS_TO set to the zero
+address. Relayers start relaying messages from and to C, and because some
+packets have incorrectly set fee recipients, some native tokens are sent to
+SEND_LOST_GAS_TO. In the case of EscrowC, tokens are burned. The team noticed
+the problem and redeployed the escrow contract to the correct address.
+Now, the team has to notify relayers that EscrowC located on chain C with the
+same address as EscrowA and EscrowB is malfunctioning and should not be
+used.
+Recommendation
+Add the zero-address validation to the constructor:
+constructor(address sendLostGasTo) {
+  if (sendLostGasTo == address(0)) revert SendLostGasIsZero();
+  SEND_LOST_GAS_TO = sendLostGasTo;
+}
+Also, add a check to the processPacket function:
+if (feeRecipient == bytes32(0)) revert FeeRecipientIsZero();
+Fix 1.1
+In the constructor, a new check is added:
+if (sendLostGasTo == address(0)) revert SendLostGasToIsZero();
+In the processPacket function, a new check is added:
+if (feeRecipient == bytes32(0)) revert FeeRecipientIsZero();
+The issue was fixed in the PR#43, commit 2fbcf02 [2]
+===========================================================================
+M2: Insufficient validation of a disabled route
+may lead to the locked Ether
+Medium severity issue
+Impact: High Likelihood: Low
+Target: IncentivizedMessageEscrow.s
+ol
+Type: Data Validation
+Description
+The setRemoteImplementation function of the IncentivizedMessageEscrow
+contract allows for setting a remote implementation address to any bytes
+value. The function documentation states that the route may be turned off
+by setting the hex"00" value for implementation. However, this value is not
+implemented and only serves as an example. Because turning off a route is
+not standardized, an app can still send a message to a disabled remote chain
+to a non-existing address. Because this address cannot act as an escrow, the
+ACK packet will never be generated, and if the message deadline is zero, the
+bounty set on the source chain will never be paid out. The contract does not
+have any way to recover such undeliverable messages, and the bounty paid
+to the contract will become locked in the contract.
+Exploit Scenario
+Assume there are two chains: A and B. On A, there is an app AppA and the
+escrow EscrowA. AppA calls EscrowA.setRemoteImplementation(keccak256("B"),
+hex"00"). At this point, AppA should not be able to send messages to chain B.
+However, AppA can still call submitMessage() with destinationIdentifier =
+keccak256("B"). The contract has no validations that would prevent AppA from
+sending the message to a disabled chain. A destination relayer cannot deliver
+the message to B. The fees paid by AppA are locked in escrowA and cannot be
+recovered.
+Recommendation
+Consider standardizing the way to turn off the remote chain. For example, a
+disableRoute(bytes32 destinationIdentifier) function can be implemented
+like following pseudo-code:
+function disableRoute(bytes32 destinationIdentifier) external {
+  setRemoteImplementation(destinationIdentifier, hex"00");
+}
+Furthermore, the line in submitMessage()
+if (destinationImplementation.length == 0) revert NoImplementationAddressSet();
+can be extended to
+if (destinationImplementation.length == 0) revert NoImplementationAddressSet();
+if (destinationImplementation.length == 1 && destinationImplementation[0] ==
+0x00) revert RemoteDisabled();
+Fix 1.1
+A new error RouteDisabled is added to IMessageEscrowErrors with a new
+constant bytes1 constant DISABLE_ROUTE_IMPLEMENTATION = 0x00 in
+IncentivizedMessageEscrow. The setRemoteImplementation function’s
+documentation is updated to reflect the new standard for disabling a route.
+The submitMessage function is updated to check if the destination
+implementation is disabled and revert with RouteDisabled if it is:
+if (destinationImplementation.length == 1 && destinationImplementation[0] ==
+DISABLE_ROUTE_IMPLEMENTATION) revert RouteDisabled();
+The issue was fixed in the PR#48, commit cc44ec2 [3]
+===========================================================================
+M3: MessageDelivered event is used for both
+successful and failed calls
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: IncentivizedMessageEscrow.s
+ol
+Type: Logging
+Description
+The message identifier and the payload in _handleMessage are taken from the
+raw message received by the destination relayer. The function verifies if the
+message came from the authorized source and if the deadline has not passed
+yet. In all the cases, an acknowledgment packet is crafted, and the
+MessageDelivered(bytes32 indexed messageIdentifier) is emitted. The event
+includes no additional information about what happened in the contract, and
+off-chain components can’t distinguish successful message deliveries from
+unsuccessful ones. Moreover, if the same or a malformed packet is sent
+several times from multiple senders, accidentally or on purpose, the escrow
+contract will emit the same MessageDelivered event multiple times, and the
+off-chain indexing and filtering will become complicated. The worst-case
+scenario is the denial of service for a message because of deceived relayers
+that collect the information of the message delivery status and do not relay
+already delivered messages.
+Recommendation
+Update the emitted event with more information about the party that sent
+the message to allow relayers to filter out faulty deliveries.
+Fix 1.1
+Multiple events were updated with more information about the party that
+sent the message. Events BountyPlaced, MessageDelivered, MessageAcked,
+TimeoutInitiated, MessageTimedOut and BountyClaimed now include the
+information about the source or destination implementation and the chain
+identifier. For instance, the MessageDelivered event described above now
+includes the information about the source escrow implementation address
+that sent the message and the source chain identifier. The relayers are now
+protected against invalidating message deliveries for valid messages in case
+invalid senders send an unauthorized message to the escrow contract. The
+issue was fixed in the PR#42, commit c490e14 [4]
+===========================================================================
+L1: Large messages may not be delivered due to
+different block gas limits on different chains
+Low severity issue
+Impact: Medium Likelihood: Low
+Target: IncentivizedMessageEscrow.s
+ol
+Type: Denial of Service
+Description
+Most EVM chains have different block gas limits. If an application on the
+source chain, where gas limits are high enough, sends a large message to the
+destination chain with a lower block gas limit, the transaction will fail. The
+message becomes undeliverable, and the bounty paid by the source
+application will become locked forever in the escrow contract.
+Exploit Scenario
+Assume that an application sends a message from Arbitrum to Optimism.
+Arbitrum has a block gas limit of 32,000,000, while Optimism has 30,000,000.
+The app creates a large message processed on Arbitrum, but it is too big for
+Optimism. The transaction on the destination chain will revert because of the
+block gas limit. The incentive on the source chain gets locked.
+Recommendation
+There are multiple possible solutions:
+1. Set a limit to the message length.
+2. Implement a function that allows cancellation of packet transmission and
+refund fees.
+3. Set an explicit large deadline for all messages.
+Fix 1.1
+The issue was acknowledged with the comment:
+We acknowledge the issue, however, we don’t believe there is
+any way to generalize a solution. We don’t want to enforce
+arbitrary limits (how are we to know what limits apply for a
+combination of chains + AMBs?) The contracts are ownerless
+and as a result, this would be implemented as a constant. How
+can one say that the message size is constant over time?
+Recommendation 2 is not possible without significantly
+increasing the gas cost. (~20-30% extra). Recommendation 3 is
+not a solution either since timeouts would be blocked similarly
+to the ordinary packages.
+===========================================================================
+L2: Unfair fee distribution due to floating
+block.timestamp
+Low severity issue
+Impact: Low Likelihood: Low
+Target: IncentivizedMessageEscrow.s
+ol
+Type: Logic
+Description
+As block.timestamp is floating between different chains, there may be a
+problem with calculating fair fees for source and destination relayers for
+messages with the timeDelta set. There is a possibility that the
+block.timestamp for the ACK message is lower than the timestamp of the
+message delivery on the destination chain. The execution time of the ACK
+message is calculated using the following code:
+Listing 1. Excerpt from IncentivizedMessageEscrow
+811 uint64 executionTime;
+812 unchecked {
+813 // Underflow is desired in this code chuck. It ensures that the
+  code piece continues working
+814 // past the time when uint64 stops working. *As long as any
+  timedelta is less than uint64.
+815 executionTime = uint64(block.timestamp) -
+  messageExecutionTimestamp;
+816 }
+In this case, if messageExecutionTimestamp is greater than block.timestamp, the
+subtraction underflows and executionTime becomes a large unsigned value,
+much larger than two time deltas. In this case, the destination relayer fee is
+zero, and the source relayer receives everything.
+Exploit Scenario
+The following scenario can happen accidentally or on purpose if the source
+relayer controls the L2 sequencer and can set block timestamps.
+Assume that a message is sent from L2 to L1. On L1, it is confirmed, and an ack
+message is generated. The time delta is set to be d, a positive number of
+seconds.
+1. The source relayer relays the ACK message from the destination to the
+source chain, i.e. from L1 to L2. Assume the ACK packet contains the
+execution timestamp equal to x.
+2. A new L2 block is created, and the sequencer sets block.timestamp to a
+value that happens to be lower than x, let y < x.
+3. The escrow contract calculates the execution time, which underflows and
+is set to a large value, i.e., 2**64 - (x-y) >> 2 * d.
+4. The destination relayer gets zero fees, and the source relayer acquires
+actualFee, or the sum of the destination and source fees.
+Recommendation
+Make sure that the message timestamp is in the past or assume that if it’s in
+the future, the time elapsed from the message delivery is small.
+Fix 1.1
+The _payoutIncentive function was updated to check if the executionTime
+variable is unrealistically large. If it is, the function sets the executionTime to
+zero. The upper boundary was chosen to be 32768 days since that is the
+nearest value close to the uint32 limit or 49710 days. The check code is shown
+below:
+if (executionTime > 32768 days) executionTime = 0;
+The issue was fixed in the PR#46, commit 16827be [5]
+===========================================================================
+L3: Usage of send and transfer can make the
+escrow unusable for smart-contract relayers
+Low severity issue
+Impact: Low Likelihood: Low
+Target: IncentivizedMessageEscrow.s
+ol
+Type: Logic
+Description
+In IncentivizedMessageEscrow, the _payoutIncentive function distributes the
+fees between source and destination relayers and the refund address. The
+implementation uses send and transfer functions to send the required fees to
+the recipients. These functions transfer the required amount of the native
+token, limiting the gas to 2300. While this does not influence transfers to
+EOAs, this gas limitation may create problems for relayers or refund addresses
+pointing to smart contracts. If the recipient contract’s receive() function has
+some additional logic, or if the relayer is called through a proxy contract, the
+token transfer will fail because of insufficient gas. Furthermore, gas prices for
+certain opcodes may change in the future, and transfers working today may
+fail after certain network upgrades.
+Listing 2. Excerpt from IncentivizedMessageEscrow
+789 if(!payable(refundGasTo).send(refund)) {
+790 payable(SEND_LOST_GAS_TO).transfer(refund); // If we don't send
+  the gas somewhere, the gas is lost forever.
+791 }
+792 
+793 // If both the destination relayer and source relayer are the same
+  then we don't have to figure out which fraction goes to who. For timeouts,
+  logic should end here.
+794 if (destinationFeeRecipient == sourceFeeRecipient) {
+795 payable(sourceFeeRecipient).transfer(actualFee); // If this
+39 of 79
+  reverts, then the relayer that is executing this tx provided a bad input.
+796 return (gasSpentOnSource, deliveryFee, ackFee);
+797 }
+798 
+799 // If targetDelta is 0, then distribute exactly the rewards.
+800 if (targetDelta == 0) {
+801 // ".send" is used to ensure this doesn't revert. ".transfer"
+  could revert and block the ack from ever being delivered.
+802 if(!payable(destinationFeeRecipient).send(deliveryFee)) { // If
+  this returns false, it implies that the transfer failed.
+803 // The result is that this contract still has deliveryFee.
+  As a result, send it somewhere else.
+804 payable(SEND_LOST_GAS_TO).transfer(deliveryFee); // If we
+  don't send the gas somewhere, the gas is lost forever.
+805 }
+806 payable(sourceFeeRecipient).transfer(ackFee); // If this
+  reverts, then the relayer that is executing this tx provided a bad input.
+807 return (gasSpentOnSource, deliveryFee, ackFee);
+808 }
+Exploit Scenario
+There are three scenarios:
+1. The refundGasTo is a smart contract with some additional logic, for which
+2300 gas is insufficient. In this case, send fails, and the refund is
+transferred to the SEND_LOST_GAS_TO address. The execution continues, yet
+the value should be transferred manually to the refund address.
+2. The sourceFeeRecipient is a smart contract with some additional logic, for
+which 2300 gas is insufficient. In this case, the transaction fails because
+transfer is used. The ACK message is not delivered, and the relayer is not
+paid for the gas spent. Another EOA or relayer with a simpler receive logic
+can deliver the ACK message.
+3. The destinationFeeRecipient is a smart contract with some additional
+logic, for which 2300 gas is insufficient. This case is similar to the first one.
+The gas message is delivered, but the gas must be transferred manually to
+the destination relayer later.
+Recommendation
+Consider using call() instead of transfer() and send():
+(bool transferSuccess,) = feeRecipient.call{value: value}("");
+if (!transferSuccess) {
+  (bool lostTransferSuccess,) = lostGasRecipient.call{value: value}("");
+  require(lostTransferSuccess, "Transfer failed.");
+}
+There may also be a need to limit the gas for the call to refundGasTo and
+destinationFeeRecipient because they can consume all 63/64 allocated gas,
+and the remaining 1/64 may not be enough to finish the execution. One can
+either set a hard gas value and state this explicitly in the documentation or a
+fraction of the remaining gas.
+The other option is to implement a pull mechanism, where the recipient
+withdraws the funds from the escrow contract. This way, all the gas-related
+problems are shifted to the recipient. However, the pull mechanism must be
+thought through carefully to support all possible AMBs architectures.
+Fix 1.1
+The issue was acknowledged with the comment:
+We do not believe there is a solution that does not come with
+tradeoffs.
+• The current solution is incompatible with certain chains,
+certain relayer addresses, and certain refund addresses.
+• Using call` + adding a larger amount of gas forwarding is not
+a guaranteed solution. Whatever gas assumptions we make
+may change and this solution won’t be any better than the
+current. Furthermore, depending on how large the gas
+stipend is, it can be used for griefing and add variability to
+the cost of delivering acks. (make evaluation of bounties
+more difficult)
+• Using a pull scheme makes the integration into external
+relayers more difficult as they now have to understand they
+need to pull assets. This adds UX issues where we need to
+inform the users that they need to pull refunds.
+Based on all of these observations, we have decided not to
+change the logic.
+===========================================================================
+W1: Usage of solc optimizer
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Compiler
+configuration
+Description
+The project uses solc optimizer. Enabling solc optimizer may lead to
+unexpected bugs.
+The Solidity compiler was audited in November 2018, and the audit concluded
+that the optimizer may not be safe.
+Exploit scenario
+A few months after deployment, a vulnerability is discovered in the optimizer.
+As a result, it is possible to attack the protocol.
+Recommendation
+Until the solc optimizer undergoes more stringent security analysis, opt-out
+using it. This will ensure the protocol is resilient to any existing bugs in the
+optimizer.
+Fix 1.1
+The issue was acknowledged with the comment:
+We need the Solidity optimizer to fix stack issues.
+===========================================================================
+W2: block.timestamp can be different on different
+chains
+Impact: Warning Likelihood: N/A
+Target: IncentivizedMessageEscrow.s
+ol
+Type: Logic
+Description
+The IncentivizedMessageEscrow contract relies on block.timestamp to
+calculate the deadlines and, in case time deltas are used, the fees for source
+and destination relayers. Moreover, timestamps on layer-2 blockchains are
+floating. For example, on Arbitrum, timestamps of L2 blocks are set by a
+sequencer within a floating window [-24 hours, 1 hour] from the actual
+timestamp to accommodate possible delays in posting the transaction batch
+onto the parent chain. This behavior and inconsistencies can cause the
+escrow contract to create invalid packages, especially with a small deadline.
+One way to use timestamps to increase the fee for a source relayer is
+described in L2.
+Recommendation
+Time synchronization is a difficult task. One way to mitigate the influence of
+discrepancies between timestamps on source and destination chains is by
+describing these limitations in the developers' documentation to warn
+against using deadlines that are too short. If there is enough time for the
+message to propagate to the destination chain and for the acknowledgment
+to go back, if the time delta is adequate for a specific pair of source and
+target chains, the problem is not that pronounced.
+Fix 1.1
+The team claimed that the issue was already known to them. Additionally,
+they mentioned that
+The fix from a relayer / application perspective is setting
+targetDelta to 0.
+As a result, the team decided to acknowledge the issue.
+===========================================================================
+W3: Too small or too large time deltas make the
+fee distribution unfair
+Impact: Warning Likelihood: N/A
+Target: IncentivizedMessageEscrow.s
+ol
+Type: Logic
+Description
+The distribution of the fees between source and destination depends on the
+time delta. For messages that enable this functionality, if the ACK packet is
+delivered before the time delta passes from the time of message delivery on
+the destination chain, fees are proportionally reduced for the source relayer
+and increased for the destination relayer. The same principle applies if the
+time difference between the ACK message and message delivery exceeds the
+time delta. In this case, fees are proportionally reduced for the destination
+and given to the source relayer.
+While this design incentivizes relayers to deliver messages precisely on time,
+these fee distribution rules can be misused. There are two cases:
+1. If the party who can relay messages from the source to the destination
+chain creates an incentive with a large time delta and relays the message,
+they can wait for others to relay the ACK message back to the source
+chain. In this case, because of the significant difference between the time
+delta and the execution time, the destination relayer gets all the fees. The
+source relayer gets nothing or almost nothing.
+2. The opposite situation is for a party who can relay ACK messages from the
+destination to the source chain. In this case, it sets a small time delta and
+lets others relay their message while handling the ACK themselves. Then,
+the source relayer gets all the fees, and the destination relayer gets
+nothing.
+Recommendation
+Ensure relayers know about this behavior and recommend adequate time
+delta ranges in the documentation so that relayers can either ignore
+malicious messages or make sure that one relayer can relay both the message
+and the acknowledgment.
+Fix 1.1
+The team acknowledged the issue with a link to the documentation that
+explains the issue and suggests that relayers should be aware of this
+behavior.
+===========================================================================
+W4: Setting insufficient gas for a call will lead to
+undelivered messages and locked assets
+Impact: Warning Likelihood: N/A
+Target: IncentivizedMessageEscrow.sol
+Type: Logic
+Description
+Message creation includes setting maximum gas limits for source and
+destination chains and gas prices. While users can increase the gas price, the
+amount of gas for calls is fixed. If gas values are insufficient for a call on the
+destination chain or for delivering the acknowledgment, there is a risk of the
+message not being executed.
+Recommendation
+Consider adding a function that increases maxGasAck and maxGasDelivery.
+Fix 1.1
+The team acknowledged the issue with the comment:
+It is not possible to change maxGasDelivery once set since it is
+part of the cross-chain message. If a pathway was created to
+change it by emitting a new message, relayers could ignore the
+new message (which would get proof later than the original
+message). Changing maxGasAck could act as a DoS vector where
+anyone could increase the maxGasAck (using custom
+application logic) to deny delivery of messages. This is not
+intended. The message failing to execute on the destination is
+not an issue for applications aware of the risk. Furthermore, acks
+can always be replayed so failure on the source can be
+circumvented. If applications want to ensure that messages are
+delivered with enough gas, estimate the gas that will be used at
+the destination and add a significant and proper margin.
+Unspent gas will be refunded.
+===========================================================================
+W5: From applications are not validated for being
+a smart contract
+Impact: Warning Likelihood: N/A
+Target: IncentivizedMessageEscrow.sol
+Type: Data Validation
+Description
+The _handleAck and _handleTimeout functions use a low-level assembly call
+function. However, the target address (fromApplication) is never validated if it
+is a smart contract. In Solidity, calling an address without any code is always
+successful.
+Recommendation
+Ensure that addresses being called have code deployed.
+Fix 1.1
+The team acknowledged the issue with the following comment:
+Nothing prohibits an EOA from submitting messages nor should
+it be prohibited. The fact that they can’t do anything with the
+ack is if nothing else intended. If they wanted to use the ack,
+they would make the call from an application (Instead of calling
+submitMessage directly deploy a contract that calls submitMessage
+with relevant logic for handling the ack.) The fact that there is
+no code size check is intended as otherwise it could deny
+bounties from being claimed.
+
+W6: Paying the maximum gas fee for timeouts
+may incentivize relayers not to deliver messages
+Impact: Warning Likelihood: N/A
+Target: IncentivizedMessageEscrow.sol
+Type: Logic
+Description
+An app sending a message sets fees it will pay to destination and source
+relayers. If the message is successfully delivered, the spent gas is calculated
+based on the actual gas spending. However, if the message is delivered late,
+the message times out, and the gas spent on the destination chain is set to
+the maximum allowance, even though almost no gas was paid on the
+destination chain. If there are a few relayers in the system, it may incentivize
+them not to deliver messages and only deliver timeouts to get higher rewards.
+Recommendation
+Make sure there are enough relayers available in the system to ensure the
+probability of higher rewards for only delivering timeouts is lower than the
+probability of losing the yield for fair deliveries. In this case, the system will
+be operational, and messages will be delivered on time.
+Fix 1.1
+The issue was acknowledged with the following comment:
+We are aware. Considering that the security for this issue is 1/N,
+we believe competition will incentivize relayers to relay
+packages before timeout. When timeouts aren’t executed
+before their deadline, it must have been because the incentive
+wasn’t good enough. As a result, the incentive may be slightly
+higher when the message timed out which hopefully should get
+it relayed.
+===========================================================================
+W7: True and logged to the event gas spent
+values are different
+Impact: Warning Likelihood: N/A
+Target: IncentivizedMessageEscrow.s
+ol
+Type: Logging
+Description
+In the case of the timeout messages, the gas spent on the destination chain
+is set to the maximum allowed value, and the whole bounty is paid to the
+source relayer based on this maximum spending. However, the emitted event
+BountyClaimed has zero value for gas spent on the destination, which is
+inconsistent with the actual spending.
+Listing 3. Excerpt from IncentivizedMessageEscrow
+674 (uint256 gasSpentOnSource, uint256 deliveryFee, uint256 ackFee) =
+  _payoutIncentive(
+675 gasLimit,
+676 maxGasDelivery, // We set gas spent on destination as the entire
+  allowance.
+677 maxGasDelivery,
+678 priceOfDeliveryGas,
+679 maxGasAck,
+680 priceOfAckGas,
+681 refundGasTo,
+682 address(uint160(uint256(feeRecipient))),
+683 address(uint160(uint256(feeRecipient))),
+684 0, // Disable target delta, since there is only 1 relayer.
+685 0
+686 );
+687 
+688 emit MessageTimedOut(messageIdentifier);
+689 emit BountyClaimed(
+690 messageIdentifier,
+691 0, // No Gas spent on destiantion chain.
+692 uint64(gasSpentOnSource),
+693 uint128(deliveryFee),
+694 uint128(ackFee)
+695 );
+Recommendation
+Consider changing the gas value in the event from zero to maxGasDelivery.
+Fix 1.1
+The _handleTimeout function was updated to emit the correct gas value in the
+BountyClaimed event, or uint64(maxGasDelivery). The issue was fixed in the
+PR#45, commit 3c3bf30 [6]
+===========================================================================
+W8: Relayers are not protected against a
+malicious escrow on the destination chain
+Impact: Warning Likelihood: N/A
+Target: IncentivizedMessageEscrow.sol
+Type: Logic
+Description
+The IncentivizedMessageEscrow contract allows applications to set a remote
+escrow address to any value. Because the source escrow is trusted, relayers
+may relay the message to the destination chain and unintentionally call a
+malicious contract. While this permissionless design makes the escrow
+universal and provides more flexibility, relayers must manage their whitelists
+of valid escrow contracts to avoid interacting with malicious code.
+Recommendation
+State the permissionless design explicitly in the documentation. Ensure new
+relayers understand the risks associated with delivering messages without
+additional validation.
+Fix 1.1
+The issue was acknowledged with the following response:
+We have designed the contract to be verifiable purely based on
+address via create2. If you know the AMB address, the
+Generalised Incentives contract will be deployed to a
+predetermined address. It is still assumed that relayers keep
+track of escrow addresses to monitor events from, as any
+external contract may send events with the same topic 0 but
+without any logic to handle incentives. Only tracking messages
+from trusted escrow implementations also simplifies storage as
+message identifiers are promised to not collide.
+===========================================================================
+W9: A compiler bug may create dirty storage
+bytes
+Impact: Warning Likelihood: N/A
+Target: IncentivizedMessageEscrow.s
+ol
+Type: Compiler Bugs
+Description
+In the setRemoteImplementation() function, the line
+implementationAddress[msg.sender][destinationIdentifier] = implementation
+copies bytes from calldata to storage. The minimum Solidity version of the
+contract is set to 0.8.13; this version is prone to a bug that may result in dirty
+storage values while copying bytes from calldata to storage.
+Recommendation
+Consider using the latest Solidity version.
+Fix 1.1
+The minimum Solidity version was changed to 0.8.22 in all contracts. The issue
+was fixed in the PR#47, commit b4e27b2 [7]
+===========================================================================
+I1: Unused declarations
+Impact: Info Likelihood: N/A
+Target: IncentivizedPolymerEscrow.so
+l
+Type: Code Style
+Description
+In IncentivizedPolymerEscrow, the NotEnoughGasProvidedForVerification error
+and the _TIMEOUT_AFTER_BLOCK constant are never used.
+Recommendation
+Consider removing unused declarations.
+Fix 1.1
+The team claimed that the IncentivizedPolymerEscrow contract was outdated
+and a new version was created that was out of the scope of the audit. The
+issue was therefore acknowledged with the comment:
+Fixed in the newest version of the Polymer Escrow.
+===========================================================================
+I2: Improve protocol documentation
+Impact: Info Likelihood: N/A
+Target: IncentivizedMessageEscrow.sol
+Type: Documentation
+Description
+The NatSpec documentation of several functions is either missing or
+incomplete. Good documentation shows the maturity of the project and
+improves the user experience.
+• IncentivizedMessageEscrow::_verifyPacket: Missing parameters
+documentation.
+• IncentivizedMessageEscrow::proofValidPeriod: Missing documentation.
+• IncentivizedMessageEscrow::bounty: Missing documentation.
+• IncentivizedMessageEscrow::messageDelivered: Missing parameters
+documentation.
+• IncentivizedMessageEscrow::setRemoteImplementation: The documentation
+for the implementation format and parameters documentation is missing.
+• IncentivizedMessageEscrow::increaseBounty: Missing parameters
+documentation.
+• IncentivizedMessageEscrow::submitMessage: Missing incentive parameter
+documentation.
+• IncentivizedMessageEscrow::recoverAck: Missing parameters
+documentation.
+• IncentivizedMessageEscrow::reemitAckMessage: Missing parameters
+documentation.
+• IncentivizedMessageEscrow::timeoutMessage: The order of sourceIdentifier
+and implementationIdentifier is swapped.
+Recommendation
+Consider improving the contract documentation and adding missing
+information.
+Fix 1.1
+The missing or incomplete documentation for the
+IncentivizedMessageEscrow contract was updated. The issue was fixed in the
+PR#44, commit 9846038 [8]
+===========================================================================
+I3: Use maximum line length
+Impact: Info Likelihood: N/A
+Target: **/* Type: Code Style
+Description
+The code in the project does not adhere to a maximum line length, resulting in
+code that is difficult to read and comprehend. This violation of coding
+standards reduces the readability and maintainability of the code, potentially
+leading to errors and inefficiencies.
+Recommendation
+Consider refactoring the codebase to maintain a maximum line length,
+typically around 80-120 characters per line.
+Fix 1.1
+The issue was acknowledged with the comment:
+W10: Non-standard use of the LayerZero tech
+stack
+Impact: Warning Likelihood: N/A
+Target: IncentivizedLayerZeroEscrow.
+sol
+Type: Logic
+Description
+The current IncentivizedLayerZeroEscrow implementation sets the contract
+as an executor. A typical LayerZero flow consists of multiple steps, starting
+from sending the message on the source chain, the verification of the
+message hash by several DVNs (Decentralized Verifier Networks), and the
+execution of the message on the destination chain. When a message is sent
+over the LayerZero network in a channel between the source app and the
+destination app, it is assigned a unique monotonically increasing nonce.
+Nonces ensure the only-once delivery of the message to the destination
+chain and the losslessness. When the message is verified by all required DVNs
+and the required number of optional DVNs, its state is changed to "Verifiable."
+Finally, an executor executes the message and commits the message,
+changing the state to "Verified." LayerZero ensures that messages cannot be
+delivered until all previous messages with nonces less than the current one
+are delivered or skipped. Such a design ensures censorship resistance.
+The current implementation breaks this cycle by not initiating the
+commitment, i.e., the executor never commits the message as delivered while
+still executing it. Moreover, the implementation does not follow the LayerZero
+API for implementing OApps. This design does not create any direct security
+risk as the only-once delivery is embedded in the core of the
+IncentivizedMessageEscrow protocol, and censorship resistance can be
+overcome by increasing the number of relayers. However, this makes it
+necessary to create a network of relayers and executors aware of the
+domain-specific API, which makes the current LayerZero architecture not
+fully utilized. For example, the LayerZero explorer cannot track if messages
+are successfully delivered.
+While the current design does not require nonces, other security features
+may not be fully utilized and can create additional risks. The LayerZero tech
+stack is thoroughly audited, and such changes in the design can potentially
+cause unexpected consequences.
+Recommendation
+Consider a deeper integration into the LayerZero tech stack to utilize the
+existing architecture, or discuss the current implementation with the
+LayerZero team to verify if such usage will not cause problems in the future.
+Fix 2.1
+The issue was acknowledged with the comment:
+We are aware that our implementation is not standard.
+Unfortunately, there is no clean way to integrate LZ because of
+their dual on-chain commitment component of their stack.
+We believe that the current implementation is the best we can
+do given the constraints. This does imply that DVNs may be able
+to censor transactions. After deliberation with the LZ team, we
+(Cata Labs) do not believe that a nonce based approach is
+sufficient for censorship resistance and as such won’t
+implement a replacement.
+===========================================================================
+W11: Incorrect SPDX license identifier
+Impact: Warning Likelihood: N/A
+Target: IncentivizedLayerZeroEscrow.
+sol
+Type: License
+Description
+In the IncentivizedLayerZeroEscrow contract, the license is set to:
+Listing 4. Excerpt from IncentivizedLayerZeroEscrow
+1 // SPDX-License-Identifier: DO-NOT-USE
+This license header is misleading and invalid.
+Recommendation
+Consider choosing a valid license for the contract.
+Fix 2.1
+The MIT license is now being used. The issue was fixed in the PR#55, commit
+040e175 [1]
+===========================================================================
+W12: Unused code
+Impact: Warning Likelihood: N/A
+Target: IncentivizedLayerZeroEscrow.
+sol
+Type: Code quality
+Description
+In the IncentivizedLayerZeroEscrow contract, the error
+LZ_ULN_InvalidPacketHeader and the imported IMessageLibManager are not used
+anywhere in the code.
+Recommendation
+Consider removing the unused error and import.
+Fix 2.1
+The unused code and the import were removed from the code. The issue was
+fixed in the PR#54, commit 0d9f2ba [2]
+===========================================================================
+I4: Typos
+Impact: Info Likelihood: N/A
+Target: IncentivizedLayerZeroEscrow.
+sol, IUlnBase.sol
+Type: Code quality
+Description
+There are multiple typos in the contract documentation.
+• In IUlnBase, on lines 12 and 13, sorted an an ascending order should be
+replaced with sorted in an ascending order.
+• In IncentivizedLayerZeroEscrow, on lines 61, 63, and 68, verfiyable should
+be replaced with verifiable.
+• In IncentivizedLayerZeroEscrow, on lines 175, 176, 177, and 179, verifiyable
+should be replaced with verifiable.
+• In IncentivizedLayerZeroEscrow, on lines 243, 244, 248, and 249, verifyable
+should be replaced with verifiable.
+• In IncentivizedLayerZeroEscrow, on line 40, Messag should be replaced with
+Message.
+• In IncentivizedLayerZeroEscrow, on line 132, arguemt should be replaced
+with argument.
+• In IncentivizedLayerZeroEscrow, on line 212, there is an additional space
+between = and address(0).
+Recommendation
+Fix the typos.
+70 of 79
+Fix 2.1
+The issue was fixed in the PR#56, commit db0c96e [3]

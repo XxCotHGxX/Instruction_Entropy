@@ -1,0 +1,39 @@
+Repository URL: https://github.com/IPOR-Labs/ipor-protocol
+Full commit hash: a1a3657
+========================================================================
+Findings Summary:
+==================
+W1: Usage of solc optimizer
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Compiler
+configuration
+Description
+The project uses solc optimizer. Enabling solc optimizer may lead to
+unexpected bugs.
+The Solidity compiler was audited in November 2018, and the audit concluded
+that the optimizer may not be safe.
+Vulnerability scenario
+A few months after deployment, a vulnerability is discovered in the optimizer.
+As a result, it is possible to attack the protocol.
+Recommendation
+Until the solc optimizer undergoes more stringent security analysis, opt-out
+using it. This will ensure the protocol is resilient to any existing bugs in the
+optimizer.
+Fix 1.1
+Currently we are using optimizer in already deployed IPOR Protocol smart
+contracts. Liquidity Mining is a part of IPOR Protocol so will be part of public
+repo ipor-protocol where we are using optimizer. We will monitor future issues
+related with Optimizer.
+=======================================================================
+I1: Redundant inheritance of Ownable
+Impact: Info Likelihood: N/A
+Target: IporToken.sol Type: Dead code
+Description
+The IporToken inherits from IporOwnable. However, it does not use any
+functionality the Ownable pattern provides. As such, it only adds
+unnecessary complexity to the code and lowers the readability, implying that
+the IporToken is somehow ownable.
+Recommendation
+Remove the inheritance of IporOwnable in the IporToken contract.
+Fix 1.1
+Redundant inheritance was removed from a contract.

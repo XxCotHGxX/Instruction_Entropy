@@ -1,0 +1,122 @@
+========================================================================
+Finding #1: withdraw_payment and cancel_payment instructions will not work after the pay stream ends
+Severity : Critical
+Description:
+The instructions withdraw_payment and cancel_payment become ineffective once the pay stream has ended, potentially causing issues in fund handling.
+
+Recommendation:
+Fix the instructions to handle the scenario after the pay stream ends to ensure correct operation.
+
+Repository
+URL: https://github.com/heliofi/helio-protocol
+========================================================================
+Finding #2: Possibility of stealing tokens from escrow token account
+Severity : Critical
+Description:
+A vulnerability exists allowing an attacker to steal tokens from the escrow token account.
+
+Recommendation:
+Implement stricter controls and validation to protect the escrow token account from unauthorized access.
+
+Repository
+URL: https://github.com/heliofi/helio-protocol
+========================================================================
+Finding #3: Possibility of stuck tokens
+Severity : Critical
+Description:
+Tokens can become permanently stuck in the contract due to improper handling.
+
+Recommendation:
+Update contract logic to ensure tokens can always be retrieved or recovered.
+
+Repository
+URL: https://github.com/heliofi/helio-protocol
+========================================================================
+Finding #4: Using the same struct for SOL payments as for token payments results in the possibility of a tokens lock attack
+Severity : Critical
+Description:
+Sharing the same struct for SOL and token payments creates risk of a tokens lock attack.
+
+Recommendation:
+Separate the struct implementations to handle SOL and token payments distinctly.
+
+Repository
+URL: https://github.com/heliofi/helio-protocol
+========================================================================
+Finding #5: Hanging payment_token_account(s)
+Severity : Medium
+Description:
+Payment token accounts may remain hanging or unused, which can cause inefficiencies or inconsistencies.
+
+Recommendation:
+Implement mechanisms to clean up or manage hanging payment token accounts.
+
+Repository
+URL: https://github.com/heliofi/helio-protocol
+========================================================================
+Finding #6: Using find_program_address instead of create_program_address
+Severity : Low
+Description:
+The code uses find_program_address where create_program_address would be more appropriate.
+
+Recommendation:
+Replace find_program_address calls with create_program_address where necessary for correctness.
+
+Repository
+URL: https://github.com/heliofi/helio-protocol
+========================================================================
+Finding #7: PaymentAccount struct has unused fields
+Severity : Informational
+Description:
+Some fields in the PaymentAccount struct are unused, possibly indicating redundant or leftover code.
+
+Recommendation:
+Remove or refactor unused fields to improve code clarity.
+
+Repository
+URL: https://github.com/heliofi/helio-protocol
+========================================================================
+Finding #8: Unnecessary mutable modifier
+Severity : Informational
+Description:
+Some variables have a mutable modifier that is not necessary, which could be removed for clarity.
+
+Recommendation:
+Remove unnecessary mutable modifiers.
+
+Repository
+URL: https://github.com/heliofi/helio-protocol
+========================================================================
+Finding #9: Anchor version mismatch
+Severity : Informational
+Description:
+The project uses an Anchor version that does not match recommended versions, leading to build and test issues.
+
+Recommendation:
+Update Anchor version to match best practices and compatibility.
+
+Repository
+URL: https://github.com/heliofi/helio-protocol
+========================================================================
+Finding #10: Impossible to build and test with a newer anchor version
+Severity : Informational
+Description:
+The current setup cannot be built or tested with newer versions of Anchor.
+
+Recommendation:
+Fix build system and dependencies to support newer Anchor versions.
+
+Repository
+URL: https://github.com/heliofi/helio-protocol
+========================================================================
+Finding #11: A missing CHECK doc comment
+Severity : Informational
+Description:
+Some CHECK comments documenting security checks are missing.
+
+Recommendation:
+Add appropriate CHECK doc comments for clarity and auditability.
+
+Repository
+URL: https://github.com/heliofi/helio-protocol
+========================================================================

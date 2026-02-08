@@ -1,0 +1,449 @@
+========================================================================
+Finding #1: Possible shares inflation  
+Severity : Medium  
+
+Description:  
+The UmbrellaStakeToken is an ERC-4626 vault. The ERC-4626 standard is
+known to be potentially vulnerable to share inflation when the conversion
+rate between shares and assets can be significantly affected. As a result,
+shares can grow exponentially over time up to the maximum numbers for
+storing integers. Once this happens, the ERC-4626 vault enters a denial-ofservice
+state due to overflows/underflows caused by huge integers.
+In the case of the UmbrellaStakeToken, the conversion rate calculation is
+defined by the OpenZeppelin implementation; however, it can be significantly
+affected by the slashing mechanism.
+The following simulation demonstrates how the shares can grow over time:
+1. Deploy StakeToken for WETH
+2. 10 users deposit 0.1 WETH each to the StakeToken
+3. The conversion rate is 1:1
+4. The StakeToken is slashed for 1 WETH (full slashing)
+5. Currently 1 WETH is equivalent to 999999000001000000000000000000
+shares (so just with the first full slashing the value moved from 10^18 to
+10^30)
+6. 10 users deposit 0.1 WETH each again and get slashed for the full amount
+repeatedly 4 times
+7. At this point, the shares amount for 1 WETH will raise an underflow error
+(for 0.1 WETH it is
+999995000018999950000110999795000338999487000727999002001267
+99844300155699844 (~10^77))
+With larger amounts, the shares will grow even faster. For example, with
+100,000 tokens with 18 decimals, only 3 full slashes and redeposits of this
+amount are required. Additionally, an 18 decimal token can be much cheaper
+than WETH. An example of a reputable token with 18 decimals is USDC on the
+BNB chain. In this case, depositing $1 and slashing it 5 times (while repeating
+the $1 deposit) would make the contract unusable.
+Moreover, the described steps can be performed in one transaction. Once the
+suitable conditions are met, anyone can broadcast a transaction that will
+make the contract unusable. Because the issue is sensitive to the specific
+configuration, the likelihood of the issue is considered low.
+
+Recommendation
+In general, be aware of the share inflation, set up off-chain monitoring, and
+migrate before the shares become too large, since it is not possible to fully
+mitigate the issue with the current design.
+More specifically, introduce a cooldown period on slashing. This way, it won’t
+be possible to enter the denial-of-service state after one transaction. Since
+the act of slashing is necessity for growing shares rapidly under normal
+conditions, once the slashing is triggered, the protocol maintainers can react
+by pausing the vault or setting a different deficit offset thanks to the offchain
+monitoring and alerting infrastructure. The cooldown period length is subject to discussion, but it should be at least as long as the time needed to
+react to the alert and pause the vault.
+
+Repository URL: https://github.com/bgd-labs/aave-umbrella/commit/5b987d2
+========================================================================
+Finding #2: Frequent claiming of rewards can lead to losses  
+Severity : Low  
+Description
+The indexes for users are updated in the _updateUserData function. This
+function is called within the _updateData function if the user address is not
+zero. This function is callable with a valid user address when claiming rewards
+or calling the handleDeposit hook from the StakeToken contract.
+Due to calculation imprecisions (rounding, divisions before multiplications) in
+the EmissionMath library, users can potentially receive more rewards if the
+index is not updated frequently (see Exploit Scenario). Also, until the user
+balance and indexes difference is less than the scaling factor (10^18), no
+rewards are accrued (which is a known issue).
+Listing 1. Excerpt from EmissionMath
+103 function calculateAccrued(
+104 uint152 newRewardIndex,
+105 uint152 oldUserIndex,
+106 uint256 userBalance
+107 ) internal pure returns (uint112) {
+108 return ((userBalance * (newRewardIndex - oldUserIndex)) /
+SCALING_FACTOR).toUint112();
+109 }
+A potential problem can arise if a malicious actor starts sending small
+amounts of StakeToken to the victim (as low as 1 wei). This can lead to an
+update of indexes for each block (for the victim) because the handleDeposit
+hook is called with the victim’s address. As a consequence of such griefing,the user (victim) can accrue fewer rewards than expected. Moreover, the
+victim is not the only one affected by this issue, it affects all the users of the
+pool. The size of the lost amount highly depends on several parameters,
+which are examined further in the Exploit Scenario.
+Measurement of the calculation imprecision
+For a stake token, there is a configured RT1 reward token with 10 * 10^6
+emission per second and 18 decimals. The target liquidity is set to 10000 *
+10^18. The following script is used for measurement.
+print(f"\nPercentage Differences - Multiple Updates vs Single Update
+(reference):")
+with chain.change_automine(False):
+for blocks_num in block_nums:
+with chain.snapshot_and_revert():
+print(f"\n\nTesting with {blocks_num} blocks:")
+print("==========================")
+# Store results from both execution paths
+multiple_updates_rewards = None
+single_update_rewards = None
+with chain.snapshot_and_revert():
+for i in range(blocks_num):
+tx = stake_token_usdc.transfer(alice, 1, from_=griefer,
+confirmations=0)
+chain.mine(lambda x: x + 1)
+chain.mine(lambda x: x + 1)
+same_timestamp = chain.blocks["pending"].timestamp
+multiple_updates_rewards = get_balances()
+chain.mine_many(blocks_num, 1)
+stake_token_usdc.transfer(alice, 1, from_=griefer, confirmations=0)
+chain.mine(lambda x: x + 1)
+chain.set_next_block_timestamp(same_timestamp)
+single_update_rewards = get_balances()
+# Calculate and print percentage differences
+for key in multiple_updates_rewards:
+multiple_val = multiple_updates_rewards[key]
+single_val = single_update_rewards[key]
+pct_diff = (abs(multiple_val - single_val) / single_val) * 100
+if pct_diff < 0.0001: # Less than 0.0001% difference is
+considered "no change"
+print(f"{key}: No change")
+else:
+direction = "+" if multiple_val > single_val else "-"
+print(f"{key}: {direction}{pct_diff:.4f}%")
+First, it snapshots the state of the chain to perform changes with the applied
+griefing, and then continues with the previous clean state to update the
+indexes only once. With some additional checks to make anvil behave as
+expected, the results are saved and evaluated as a percentage difference
+relative to the one-time reward update.
+The following tables will show results for different deposits.
+25% of the target liquidity: Alice: 1,000 * 10^18; Bob: 1,500 * 10^18
+Blocks Alice RT1 Bob RT1
+100 -0.0566% -0.0566%
+300 -0.0570% -0.0570%
+1000 -0.0571% -0.0571%
+3000 -0.0571% -0.0571%
+6000 -0.0571% -0.0571%
+10000 -0.0571% -0.0571%
+Table 4. Percentage Differences - Multiple Updates vs referential
+Single Update
+90% of the target liquidity: Alice: 6,000 * 10^18; Bob: 3,000 * 10^18
+Blocks Alice RT1 Bob RT1
+100 -0.0900% -0.0900%
+Blocks Alice RT1 Bob RT1
+300 -0.0906% -0.0906%
+1000 -0.0908% -0.0908%
+3000 -0.0909% -0.0909%
+6000 -0.0909% -0.0909%
+10000 -0.0909% -0.0909%
+Table 5. Percentage Differences - Multiple Updates vs referential
+Single Update
+900% of the target liquidity: Alice: 60,000 * 10^18; Bob: 30,000 * 10^18
+Blocks Alice RT1 Bob RT1
+100 -0.9914% -0.9914%
+300 -0.9979% -0.9979%
+1000 -0.9991% -0.9991%
+3000 -0.9998% -0.9998%
+6000 -1.0000% -1.0000%
+10000 -0.9999% -0.9999%
+Table 6. Percentage Differences - Multiple Updates vs referential
+Single Update
+9000% of the target liquidity: Alice: 600,000 * 10^18; Bob: 300,000 * 10^18
+Blocks Alice RT1 Bob RT1
+100 -9.9220% -9.9220%
+300 -9.9813% -9.9813%
+1000 -9.9921% -9.9921%
+3000 -9.9981% -9.9981%
+6000 -9.9996% -9.9996%
+Root cause of the issue
+This behavior is caused by the precision loss in the following line of code:
+Listing 2. Excerpt from EmissionMath
+91 uint256 indexIncrease = (currentEmission * timeDelta) /
+extraParamsForIndex.totalSupply;
+When the currentEmission value is small enough (in the example above, it is 10
+* 10^6 when the token has 18 decimals) and the total supply is already large
+enough, this line of code experiences precision loss. For example, in the test
+described above, during execution of this line after sending 1 wei to the
+victim, the values of the variables are:
+currentEmission = 10 * 10^6
+totalSupply = 900_000 * 10^18
+timeDelta = 1
+It should be mentioned that targetLiquidity is reached, and emission is flat.
+indexIncrease = (10 * 10**6 * 1) // 900_000 * 10**18;
+As a result, the index increase is lost in the current calculation, and the user
+will not receive emissions for this index increase. This scenario is realistic for
+pools with small emissions and large total supply. It is unlikely to have pools
+that would exceed the target liquidity so extremely. However, for pools that
+don’t reach the targetLiquidity, the precision loss is still present (see results above). If we increase the emission from the 90% target liquidity example
+above to 10 * 10**8, then we lose only -0.0009%, so the configuration of this
+variable is crucial for this issue to occur.
+
+Recommendation
+Be aware that these configurations can lead to a precision loss. Consider
+implementing constraints against configurations that can lead to precision
+loss and possible griefing attacks to protect users from losing rewards.
+Acknowledgment 1.1
+We accept that there is some calculation error, but we
+believe that it is insignificant. In a situation where
+extreme values are not chosen, we assume that this error will
+not exceed 0.01%, which is a good result for most cases.
+
+Repository URL: https://github.com/bgd-labs/aave-umbrella/commit/5b987d2
+========================================================================
+Finding #3: The latestAnswer function reverts after slashing configuration removal  
+Severity : Low  
+Description:  
+If the slashing configuration is removed, calling `latestAnswer()` can revert. This could break price oracle integration or dependent external contracts expecting a valid response.  
+
+Recommendation:  
+Add a fallback or safeguard mechanism when slashing configuration is missing or removed.  
+
+Repository URL: https://github.com/bgd-labs/aave-umbrella/commit/5b987d2
+========================================================================
+Finding #4: Inconsistent usage of _msgSender() over msg.sender  
+Severity : Warning  
+Description
+When a slashing configuration is removed via the removeSlashingConfigs
+function in the Umbrella contract, it deletes the stakesData, which also
+includes the underlyingOracle address. This causes latestUnderlyingAnswer()
+in the UmbrellaStakeToken contract to revert due to a missing address in the
+Umbrella contract. In cases where other contracts or protocols rely on the
+latestAnswer() function from the UmbrellaStakeToken contract, removing the
+slashing configuration can disrupt the operation of these contracts.
+Otherwise, the token remains functional.
+Listing 3. Excerpt from UmbrellaConfiguration.removeSlashingConfigs
+135 delete $.stakesData[removalPairs[i].umbrellaStake];
+Listing 4. Excerpt from UmbrellaStakeToken.latestAnswer
+39 uint256 underlyingPrice = uint256(
+40 IUmbrellaConfiguration(owner()).latestUnderlyingAnswer(address(this))
+41 );
+
+Recommendation
+Be aware of this behavior and inform the integrators or maintain the
+underlying oracle information even after configuration removal.
+Fix 1.1
+The issue is fixed by deleting only the reserve information from the
+stakesData array and thus keeping the underlyingOracle address active even
+after configuration removal.
+delete $.stakesData[removalPairs[i].umbrellaStake].reserve;
+
+Repository URL: https://github.com/bgd-labs/aave-umbrella/commit/5b987d2
+========================================================================
+Finding #5: W1: Inconsistent usage of _msgSender() over msg.sender 
+Severity : Warning  
+Description
+The codebase predominantly uses _msgSender() instead of msg.sender for
+sender address retrieval. However, in specific places in the inheritance chain,
+msg.sender is used. While this is not an issue in the current scope, since the
+_msgSender() function returns exactly the msg.sender value, this inconsistency
+should be addressed for possible future changes.
+The following code listings show the usage of msg.sender in in-scope files that
+are already using _msgSender().
+Listing 5. Excerpt from UmbrellaConfiguration
+310 function _checkRescueGuardian() internal view override {
+311 _checkRole(RESCUE_GUARDIAN_ROLE, msg.sender);
+312 }
+Listing 6. Excerpt from RewardsDistributor
+57 modifier onlyAuthorizedClaimer(address user) {
+58 require(isClaimerAuthorized(user, msg.sender),
+ClaimerNotAuthorized(msg.sender, user));
+Listing 7. Excerpt from RewardsDistributor
+70 function claimAllRewards(
+71 address asset,
+72 address receiver
+73 ) external returns (address[] memory, uint256[] memory) {
+74 return _claimAllRewards(asset, msg.sender, receiver);
+Listing 8. Excerpt from RewardsDistributor
+94 bytes32 structHash = keccak256(
+95 abi.encode(CLAIM_ALL_TYPEHASH, asset, user, receiver, msg.sender,
+_useNonce(user), deadline)
+96 );
+Listing 9. Excerpt from RewardsDistributor
+109 return _claimSelectedRewards(asset, rewards, msg.sender, receiver);
+Listing 10. Excerpt from RewardsDistributor
+140 msg.sender,
+141 nonce,
+142 deadline
+Listing 11. Excerpt from RewardsDistributor
+154 address receiver
+Listing 12. Excerpt from RewardsDistributor
+166 /// @inheritdoc IRewardsDistributor
+
+Recommendation
+Unify the usage of _msgSender() over msg.sender (or the opposite) throughout
+the codebase.
+
+Fix 1.1
+The issue was addressed and the msg.sender usage is replaced with
+_msgSender() in the UmbrellaConfiguration contract. In the RewardsDistributor
+contract, the msg.sender is kept due to the potential issues with inheritance chain
+
+Repository URL: https://github.com/bgd-labs/aave-umbrella/commit/5b987d2
+========================================================================
+Finding #6: W2: Missing validation of the upper bound invalidateTargetLiquidity
+Severity: Warning  
+Description
+The validateTargetLiquidity function does not validate against the specified
+upper bound for target liquidity.
+Listing 13. Excerpt from EmissionMath
+174 function validateTargetLiquidity(uint256 targetLiquidity, uint8 decimals)
+internal pure {
+175 require(targetLiquidity >= 10 ** decimals, TargetLiquidityTooLow());
+176 }
+As a result, the target liquidity in the RewardsController can be set to the
+uint160 maximum value.
+Listing 14. Excerpt from RewardsController
+540 function _updateTarget(
+541 InternalStructs.AssetData storage assetData,
+542 address asset,
+543 uint256 newTargetLiquidity
+544 ) internal {
+545 EmissionMath.validateTargetLiquidity(newTargetLiquidity,
+IERC20Metadata(asset).decimals());
+546
+547 assetData.targetLiquidity = newTargetLiquidity.toUint160();
+548
+549 emit TargetLiquidityUpdated(asset, newTargetLiquidity);
+550 }
+The documentation specifies the following constraints for targetLiquidity:
+Minimum: 1 asset token.
+Maximum: ~1e35. (The upper bound is indirectly provided by
+the further validation performed on the minimum value
+required for the maxEmissionPerSecond. maxEmissionPerSecond
+must be <= 1e21 but also >= targetLiquidity * 1e3 / 1e18.)
+
+Recommendation
+Implement the upper bound validation for the targetLiquidity parameter.
+
+Fix 1.1
+The upper bound validation is added to the validateTargetLiquidity function.
+require(targetLiquidity >= 10 ** decimals && targetLiquidity <= 1e36,
+TargetLiquidityTooLow());
+
+Repository URL: https://github.com/bgd-labs/aave-umbrella/commit/5b987d2
+
+===========================================================================================
+Finding #7: Typos  
+Severity : Informational
+  
+Description
+There is a typo in the comment:
+Listing 15. Excerpt from Umbrella
+172 // Due to rounding error (cause of index growth), it is possible that we
+receive some wei less then expected
+The word "then" should be "than" in the comparison context.
+
+Recommendation
+Fix the typo.
+
+Fix 1.1
+The typo is fixed.
+
+Repository URL: https://github.com/bgd-labs/aave-umbrella/commit/5b987d2
+========================================================================
+Finding #8: Unused using-for directive  
+Severity : Informational  
+
+Description
+The ERC4626StakeTokenUpgradeable contract contains the following unused
+using-for directive.
+Listing 16. Excerpt from ERC4626StakeTokenUpgradeable
+30 using Math for uint256;
+
+Recommendation
+Remove the unused using-for directive.
+
+Fix 1.1
+The unused using-for directive is removed.
+
+Repository URL: https://github.com/bgd-labs/aave-umbrella/commit/5b987d2
+========================================================================
+Finding #9: Permit error handling  
+Severity : Informational
+
+Description
+The permit function is correctly implemented in the try/catch clause to
+prevent permit front-running denial of service. However, when the permit
+function call fails, the error is not emitted and the transaction fails in later
+stages, such as on insufficient allowance. The error handling could be
+improved by adding a check for the desired allowance in the catch block. This
+way, if the allowance was not set with permit, the user would be notified (by
+reverting with a descriptive error message) that the issue is with the permit
+function call.
+An example of the failure case occurs when permit is not supported on the
+StakeToken asset and there is no prior allowance set. In this case, the
+transaction will always fail due to insufficient allowance without indicating
+that the permit call failed.
+Listing 17. Excerpt from StakeToken
+77 try
+78 IERC20Permit(asset()).permit(
+79 _msgSender(),
+80 address(this),
+81 assets,
+82 deadline,
+83 sig.v,
+84 sig.r,
+85 sig.s
+86 )
+87 {} catch {}
+88
+89 return deposit(assets, receiver);
+
+Recommendation
+Add a check to the catch block to continue execution if the allowance is
+sufficient; otherwise, emit a descriptive error message about the failed permit
+call.
+
+Acknowledgment 1.1
+Adding such a check will increase the cost of the
+transaction, although it will not lead to significant
+improvements, since the transaction will revert anyway as a
+result of a transfer error. We believe that most users will
+not try to send invalid signatures (or with an expired
+deadline), so optimizing for the majority of cases has a
+higher priority than for the minority.
+
+Repository URL: https://github.com/bgd-labs/aave-umbrella/commit/5b987d2
+========================================================================
+Finding #10: The same suffix is used for name and symbol  
+Severity : Informational  
+
+Description
+When creating the stake token, the same suffix string is used for both the
+token name and symbol.
+Listing 18. Excerpt from UmbrellaStkManager._getStakeNameAndSymbol
+270 isSuffixNotEmpty ? string(abi.encodePacked(' ', suffix)) : ''
+271 )
+272 );
+273
+274 // `stk+symbol+.+suffix` or `stk+symbol`
+275 string memory symbol = string(
+276 abi.encodePacked(
+277 'stk',
+278 IERC20Metadata(underlying).symbol(),
+279 isSuffixNotEmpty ? string(abi.encodePacked('.', suffix)) : ''
+It might be better to create different suffixes for the name and symbol. For
+example, for the following name:
+• Name: "Umbrella Stake ERC4626-Wrapped Aave v3 USDC Version 1.0"
+The current implementation produces this symbol:
+• Symbol: "stkwaUSDC.Version 1.0"
+A more appropriate symbol would potentially be:
+• Symbol: "stkwaUSDC.v1.0" 
+
+Recommendation
+Modify the function to accept separate suffix parameters for name and
+symbol.
+
+Acknowledgment 1.1
+Suffixes were intended as short names that were reduced to
+the minimum. They should not contain full names of words or
+markets.
+
+Repository URL: https://github.com/bgd-labs/aave-umbrella/commit/5b987d2
+========================================================================

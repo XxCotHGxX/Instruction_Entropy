@@ -1,0 +1,394 @@
+Repository URL: https://github.com/StableLabs/stablelabs-contracts/blob/5750567/src/tokens/StStable.sol
+Full commit hash: 5750567aa4f7b32c59cdba143438fff12c17f9e9
+========================================================================
+Findings Summary:
+==================
+H1: Wipe logic does not work
+High severity issue
+Impact: Medium Likelihood: High
+Target: StRWA.sol, StStable.sol Type: Logic error
+Description
+The function for wiping address balances requires the address to be frozen.
+function wipeFrozenAddress(address account) public onlyAssetProtector {
+  if (isFrozen[account] == false) {
+  revert NotFrozen();
+  }
+  uint256 balance = balanceOf(account);
+  _burn(account, balanceOf(account));
+  emit Wiped(account, balance);
+}
+However, when the _burn function is called, there is also called the _update
+function.
+function _burn(address account, uint256 value) internal {
+  if (account == address(0)) {
+  revert ERC20InvalidSender(address(0));
+  }
+  _update(account, address(0), value);
+}
+That requires the address to not be frozen. As a result, there is a
+contradiction for the frozen state and can never be executed.
+Exploit scenario
+The wipeFrozenAddress function is called and the transaction always reverts.
+Recommendation
+Remove the second blocking constraint if it is desired to be able to wipe
+frozen addresses. Otherwise, remove the wipe function.
+Fix 1.1
+The issue was fixed by calling the parent update function directly.
+super._update(account, address(0), balanceOf(account));
+===========================================================================
+H2: Locked tokens due to missing approval
+High severity issue
+Impact: Medium Likelihood: High
+Target: TreasuryOrchestrator.sol Type: Logic error
+Description
+The TreasuryOrchestrator is supposed to hold tokens and call the redeem
+function on treasuries to send tokens from the orchestrator to the treasuries.
+function redeem(address _token, uint256 _amount) external whenNotPaused {
+  ITreasury(treasuryContracts[_token]).redeem(_amount);
+}
+The redeem function is calling a simple transferFrom function.
+function redeem(uint256 amount) external whenNotPaused {
+  token.safeTransferFrom(msg.sender, address(this), amount);
+  emit Redeemed(msg.sender, amount);
+}
+However, the TreasuryOrchestrator contract does not set approval anywhere.
+As a result, the tokens are locked in the contract. Since the contract is
+upgradable, they can be unlocked with a new implementation.
+Exploit scenario
+The redeem function is called and reverts.
+Recommendation
+Implement the token approvals.
+Fix 1.1
+The redeem function was removed. The contract is not supposed to hold any
+tokens.
+===========================================================================
+M1: Renounce ownership
+Medium severity issue
+Impact: High Likelihood: Low
+Target: **/* Type: Data validation
+Description
+The contracts inherit from Openzeppelin’s Ownable2StepUpgradeable contract.
+Due to that, the ownership can be by default renounced by the owner. For
+the Treasury contracts, it is not desirable to lose access to manage them.
+Also, it might not be desirable for the tokens.
+Exploit scenario
+The owner accidentally calls renounceOwnership(). Then the owner is lost.
+Recommendation
+Override the renounceOwnership() method to disable this feature if it is not
+intended to be used in the future (wherever it is needed).
+Fix 1.1
+The renounce ownership function is using two-step pattern.
+===========================================================================
+L1: Revert inconsistency on transfer
+Low severity issue
+Impact: Low Likelihood: Medium
+Target: StRWA.sol, StStable.sol Type: Best practices
+Description
+The frozen addresses can’t participate in transfer, burn or mint operations,
+because of the overridden _update function that is called as a hook for these
+operations.
+function _update(
+  address from,
+  address to,
+  uint256 amount
+) internal virtual override whenNotPaused {
+  if (isFrozen[from] || isFrozen[to]) {
+  revert AddressFrozen();
+  }
+  super._update(from, to, amount);
+}
+However, the transfer function is also overridden with the same requirement
+but a different error.
+function transfer(
+  address to,
+  uint256 amount
+) public virtual override(ERC20Upgradeable) returns (bool) {
+  if (isFrozen[msg.sender] || isFrozen[to]) {
+  revert FrozenAddressIncludedInTransfer();
+  }
+  super.transfer(to, amount);
+  return true;
+}
+The transferFrom function is not overridden for both contracts. As a result, we
+have 3 different errors for the same requirement.
+• The AddressFrozen error - for transferFrom in StRWA,
+• the FrozenAddressIncludedInTransfer error - for transfer in StStable and
+StRWA,
+• the ContractFrozen error - for transferFrom in StStable.
+This cannot cause problems in the current scope, but it can cause more
+serious problems with future development or on the off-chain side.
+Exploit scenario
+The AddressFrozen error is expected, instead of the
+FrozenAddressIncludedInTransfer error is provided.
+Recommendation
+Remove the inconsistency, for example, by using only the _update function
+and one error type.
+Fix 1.1
+The revert inconsistency was removed.
+===========================================================================
+L2: Double-entrypoint for the initialize function
+Low severity issue
+Impact: Low Likelihood: Low
+Target: Treasury.sol, Greenlist.sol Type: Logic error
+Description
+The Treasury contract has the following initialize function.
+function initialize(address _owner, IERC20 _token) public initializer {
+  _transferOwnership(_owner);
+  token = _token;
+}
+However, it has also the function inherited from the Greenlist contract.
+function initialize(address _owner) public initializer {
+  _transferOwnership(_owner);
+}
+As a result, it is possible to initialize Treasury without setting the token.
+Exploit scenario
+The Treasury contract is deployed and initialized without specifying the
+token, so it needs redeployment.
+Recommendation
+Only the initialize function from the Treasury contract should be present.
+Fix 1.1
+The initialize function from the Greenlist contract was removed.
+===========================================================================
+L3: Missing events
+Low severity issue
+Impact: Low Likelihood: Medium
+Target: Treasury.sol,
+TreasuryOrchestrator.sol
+Type: Logic error
+Description
+The contracts are missing several events. The following list recommends
+functions where an event should be added.
+• TreasuryOrchestrator.addBatchTreasurycontracts (exists for a single
+operation)
+• TreasuryOrchestrator.removeBatchTreasuryContracts (exists for a single
+operation)
+• TreasuryOrchestrator.switchAuthorized (critical state change)
+• Treasury.switchAuthorized (critical state change)
+• Treasury.createReleaseRequest (critical state change)
+• Treasury.withdraw (critical state change)
+Exploit scenario
+The event is not emitted. As a result, the off-chain system that relies on it
+fails.
+Recommendation
+Add the missing events.
+Fix 1.1
+The events were added.
+===========================================================================
+W1: Inconsistent usage of msg.sender and
+_msgSender()
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Logic error
+Description
+The codebase is using inconsistently msg.sender and _msgSender(). In the
+current codebase it not an issue since it is returning the same value, however
+if the logic of _msgSender() changes in the future, it can lead to an
+unexpected behavior. For example, the authorization is checked against the
+msg.sender.
+function _checkAuthorized() internal view {
+  if (!authorized[msg.sender]) {
+  revert NotAuthorized();
+  }
+}
+But the owner is checked against _msgSender().
+function _checkOwner() internal view virtual {
+  if (owner() != _msgSender()) {
+  revert OwnableUnauthorizedAccount(_msgSender());
+  }
+}
+Recommendation
+Replace msg.sender occurrences with _msgSender() across the whole
+codebase.
+Fix 1.1
+The msg.sender occurences were replaced with _msgSender().
+===========================================================================
+W2: Potential storage clashes
+Impact: Warning Likelihood: N/A
+Target: Treasury.sol, Greenlist.sol Type: Logic error
+Description
+The codebase mostly inherits from contracts with unstructured storage.
+However, the Treasury contract inherits from Greenlist which has declared
+some storage variables and has no storage gaps. Changes to this contract
+can cause storage clashes in the Treasury contract.
+Recommendation
+Implement storage gaps for the Greenlist contract or mention in the
+developers' documentation that new storage variables should not be added.
+Fix 1.1
+The storage gaps were implemented in the Greenlist contract.
+===========================================================================
+I1: Code duplication
+Impact: Info Likelihood: N/A
+Target: StStable.sol, StRWA.sol Type: Best practices
+Description
+The StStable and StRWA contracts share a lot of code. To reduce code
+duplication and easily see differences between tokens, they could inherit
+from the same base contract.
+Recommendation
+Introduce a base contract for StStable and StRWA to inherit from.
+===========================================================================
+I2: Unused import
+Impact: Info Likelihood: N/A
+Target: StRWA.sol Type: Best practices
+Description
+The StRWA contract has the following unused import.
+import {AccessControlUpgradeable} from "@openzeppelin upgradeable/access/AccessControlUpgradeable.sol";
+And the TreasuryOrchestrator contract has the following unused import.
+import "../Interfaces/IGreenlist.sol";
+Recommendation
+Remove the unused imports.
+Fix 1.1
+The unused import from StRWA was removed. The unused import from
+TreasuryOrchestrator could be also removed.
+===========================================================================
+I3: Unused event
+Impact: Info Likelihood: N/A
+Target: TreasuryOrchestrator.sol Type: Best practices
+Description
+The TreasuryOrchestrator contract has the following unused events.
+• TokensReleased
+• GreenlistedTokensReleased
+Recommendation
+Remove the unused events.
+Fix 1.1
+The unused events were removed.
+===========================================================================
+I4: The encodedReleases mapping is not used
+Impact: Info Likelihood: N/A
+Target: Treasury.sol Type: Best practices
+Description
+The Treasury contract has functions to release tokens and a function to
+create a release request.
+function createReleaseRequest(
+  address _to,
+  uint256 _amount
+) external nonZeroAddress(_to) whenNotPaused returns (bytes memory) {
+  _checkAuthorized();
+  if (_amount == 0) {
+  revert ZeroAmount();
+  }
+  encodedReleases[_to] = abi.encode(_to, _amount);
+  return encodedReleases[_to];
+}
+However, these release functions do not use the created release requests.
+The encodedReleases mapping is not used anywhere in the code. As a result, it
+is not anyhow ensured that the mapping matches the past or future release
+requests.
+Recommendation
+Remove the function and mapping or utilize it (emit an event, check against
+the mapping in the release functions, etc.).
+===========================================================================
+I5: The release functions are similar
+Impact: Info Likelihood: N/A
+Target: Treasury.sol Type: Best practices
+Description
+The Treasury contract has the following two functions to release tokens.
+function releaseTokens(bytes memory data) external whenNotPaused {
+  _checkAuthorized();
+  (address to, uint256 amount) = abi.decode(data, (address, uint256));
+  if (token.balanceOf(address(this)) < amount) {
+  revert NotEnoughTokens();
+  }
+  token.safeTransfer(to, amount);
+  emit Released(to, amount);
+}
+function greenListRelease(
+  address _to,
+  uint256 _amount
+) external isGreenListed(_to) whenNotPaused {
+  _checkAuthorized();
+  if (token.balanceOf(address(this)) < _amount) {
+  revert NotEnoughTokens();
+  }
+  token.safeTransfer(_to, _amount);
+  emit GreenListRelease(_to, _amount);
+}
+These functions do the same with the difference that the greenListRelease
+function has the isGreenListed modifier. So, it has additional restrictions.
+However, since it is doing the same then the authorized address does not
+need to call the greenListRelease function at all.
+Recommendation
+Reasonably adjust the logic.
+Fix 1.1
+The greenlist release function was removed.
+===========================================================================
+I6: Ambiguous naming of a function
+Impact: Info Likelihood: N/A
+Target: Treasury.sol Type: Best practices
+Description
+The addTreasuryContract function (and addBatchTreasuryContracts
+respectively) has ambiguous naming since it sets the address, not adds. It is
+possible to overwrite an existing treasury address by calling the
+addTreasuryContract function twice.
+function addTreasuryContract(
+  address _token,
+  address _treasury
+) external nonZeroAddress(_token) nonZeroAddress(_treasury) whenNotPaused {
+  _checkOwner();
+  treasuryContracts[_token] = _treasury;
+  emit TreasuryContractAdded(_token, _treasury);
+}
+Recommendation
+Adjust the function’s naming or add protection to overwrite the existing
+treasury address by repeatedly calling the addTreasuryContract function.
+Fix 1.1
+The function was renamed to setTreasuryContract (and
+setBatchTreasuryContracts respectively).
+===========================================================================
+I7: Inconsistent usage of modifiers and checks in
+function's body
+Impact: Info Likelihood: N/A
+Target: **/* Type: Best practices
+Description
+There is inconsistent usage of in-function and modifier checks for the sender
+address in the codebase. It is not a security issue; adhering to one approach
+consistently is considered best practice. Below are two functions from
+Treasury.sol that demonstrate differing techniques for sender rights
+verification:
+function switchAuthorized(
+  address _address
+) external nonZeroAddress(_address) whenNotPaused {
+  _checkOwner();
+  authorized[_address] = !authorized[_address];
+}
+function _checkOwner() internal view virtual {
+  if (owner() != _msgSender()) {
+  revert OwnableUnauthorizedAccount(_msgSender());
+  }
+}
+The above examples highlight just one of the multiple similar occurrences
+found throughout the codebase.
+Recommendation
+Choose either modifiers or functions approach and use it consistently across
+the codebase
+Fix 1.1
+The modifiers are now used consistently throughout the codebase.
+===========================================================================
+I8: Inefficient array iterations
+Impact: Info Likelihood: N/A
+Target: TreasuryOrchestrator.sol Type: Gas optimization
+Description
+The TreasuryOrchestrator contract has a modifier to check against zero
+addresses.
+modifier nonZeroAddressBatch(address[] memory _address) {
+  uint addressLength = _address.length;
+  for (uint i = 0; i < addressLength; i++) {
+  if (_address[i] == address(0)) {
+  revert ZeroAddress();
+  }
+  }
+  _;
+}
+That is used for batch operations.
+function addBatchTreasuryContracts(
+  address[] memory _tokens,
+  address[] memory _treasuries
+)
+  external
+  nonZeroAddressBatch(_tokens)
+  nonZeroAddressBatch(_treasuries)
+  whenNotPaused
+{
+This is inefficient because the function is already iterating through the
+elements, and with this modifier, it iterates twice before even stepping the
+function. The validation can be performed during the main iteration.
+Recommendation
+Perform the validation directly in the main loop in the function.

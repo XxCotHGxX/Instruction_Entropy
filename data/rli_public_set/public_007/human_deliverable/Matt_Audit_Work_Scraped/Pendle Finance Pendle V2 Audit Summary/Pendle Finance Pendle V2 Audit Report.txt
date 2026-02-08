@@ -1,0 +1,309 @@
+Repository URL: https://github.com/pendle-finance/pendle-core-v2/tree/9d93fc1
+Full commit hash: 9d93fc1
+========================================================================
+Findings Summary:
+==================
+M1: Insufficient data validation in
+PendleAaveV3SCY
+Impact: High Likelihood: Low
+Target: PendleAaveV3SCY Type: Data validation
+Description
+PendleAaveV3SCY does not perform any data validation of passed addresses
+in its constructor.
+Exploit scenario
+An incorrect or malicious _rewardsController is passed it. Instead of reverting,
+the call succeeds.
+Recommendation
+Add more stringent data validation for _rewardsController, aToken and
+_aavePool). At least, this would include a zero-address check.
+===========================================================================
+M2: Integer overflow in Math library
+Impact: High Likelihood: Low
+Target: Math Type: Integer
+overflow
+Description
+The project uses its own Math library. We have found two functions that may
+return an unexpected result: subNoNeg and Int128.
+function subNoNeg(int256 a, int256 b) internal pure returns (int256) {
+  require(a >= b, "NEGATIVE");
+  unchecked {
+  return a - b;
+  }
+  }
+In subNoNeg, when a is a huge number and b is a negative number, the require
+statement will not revert, and a - b can overflow.
+For example, subNoNeg(int256_max, -1) returns int256_min.
+function Int128(int256 x) internal pure returns (int128) {
+  require(x < (1 << 127)); // signed, lim = bit-1
+  return int128(x);
+  }
+In Int128, there is a check that x < (1 << 127) (i.e. uint256 x is smaller than
+maximal value for int128). But what if x is smaller than the minimal value for
+int128? The require statement will not revert, and the result will be incorrect.
+For example, Int128(int128_min - 1) returns int128_max.
+Recommendation
+Short term, the subNoNeg function needs more stringent validation, such as
+verification that b >= 0.
+require(a >= b && b >= 0, "NEGATIVE");
+This guarantees that both a and b are not negative, and the result is always
+correct. For the Int128 function, add verification that the input variable x is
+within the allowed interval for int128.
+Long term, try to avoid custom libraries and use known public ones which are
+battle-tested during their existence.
+===========================================================================
+M3: Usage of solc optimizer
+Impact: High Likelihood: Low
+Target: * Type: Compiler
+configuration
+Description
+The project uses solc optimizer. Enabling solc optimizer may lead to
+unexpected bugs.
+The Solidity compiler was audited in November 2018, and the audit concluded
+that the optimizer may not be safe.
+Vulnerability scenario
+A few months after deployment, a vulnerability is discovered in the optimizer.
+As a result, it is possible to attack the protocol.
+Recommendation
+Until the solc optimizer undergoes more stringent security analysis, opt-out
+using it. This will ensure the protocol is resilient to any existing bugs in the
+optimizer.
+===========================================================================
+W1: Potential front-running of several withdraw
+and mint functions
+Impact: Warning Likelihood: N/A
+Target: * Type: Front-running
+Description
+Non-atomic interactions with components can lead to loss of funds. For
+example, if users bypass routers and interact with components directly.
+Exploit scenario
+Alice sends funds to PendleYieldToken contract and wants to call mintPY to
+gain PT and YT tokens from deposited SCY. Bob notices that the contract
+holds Alice’s SCY and front-run her mintPY transaction, thus stealing her SCY.
+Recommendation
+Ensure that every honest user interacts with the router.
+===========================================================================
+W2: Exotic tokens
+Impact: Warning Likelihood: N/A
+Target: * Type: Logic,
+Reentrancy
+Description
+The protocol works with various external contracts (base tokens, assets,
+reward tokens, etc.).
+• There are some situations in the codebase when token transfers are done
+in the middle of a state-changing function. If the tokens transferred have
+callbacks (e.g. all ERC223 and ERC777 tokens), this might create
+reentrancy possibilities.
+• If the asset used in SCYBase is not a static token (i.e., its balance
+increases on its own - asset could be some kind of a rebase token),
+SCYBase can mistakenly mint more SCY for users depositing. When the
+pool earns more assets, lastBalanceOf[asset] is not updated, which means
+that in the next mint or mintNoPull call, _afterReceiveToken returns higher
+amountBaseIn.
+Exploit scenario
+An asset is a rebase token, and the pool has 1000 assets. Therefore,
+lastBalanceOf[asset] is 1000.
+Bob wants to deposit 100 assets and get 100 SCY tokens (for simplicity, the
+ratio is 1:1).
+Suddenly, a rebase happens, and now the pool has 1500 assets, but
+lastBalanceOf[asset] is not updated.
+After that, Bob calls the mint function through the router and transfers 100
+assets to the pool.
+In _mintFresh, _afterReceiveToken says that Bob deposited 600 tokens. Hence
+Bob obtains 600 SCY tokens.
+Recommendation
+Ensure that no tokens with callbacks and no tokens that increase balances on
+their own are added.
+===========================================================================
+W3: Dangerous callbacks
+Impact: Warning Likelihood: N/A
+Target: PendleMarket Type: Reentrancy,
+External calls
+Description
+The following functions contain dangerous callback:
+• addLiquidity
+• removeLiquidity
+• swapExactPtForScy
+• swapScyForExactPt
+These callbacks are dangerous because they are triggered in msg.sender
+context. The function’s caller can be an arbitrary contract and thus an
+arbitrary external call or series of them. Moreover, this external call is
+performed before the state is written.
+Listing 1. Dangerous callback
+if (data.length > 0) {
+  IPMarketAddRemoveCallback(msg.sender).addLiquidityCallback(
+  lpToAccount,
+  scyUsed,
+  ptUsed,
+  data
+  );
+}
+Recommendation
+We didn’t find any specific exploit scenario because of the nonReentrant
+modifier usage. However, it could potentially lead to unknown consequences
+when new dependencies and functions are added in future development.
+===========================================================================
+W4: Unintended change of the reentrancy lock
+state
+Impact: Warning Likelihood: N/A
+Target: PendleMarket Type: Reentrancy
+Description
+The MarketStorage structure contains several variables including the
+reentrancy lock variable (_reentrancyStatus).
+Listing 2. MarketStorage contains reentrancy lock variable
+  struct MarketStorage {
+  int128 totalPt;
+  int128 totalScy;
+  // 1 SLOT = 256 bits
+  uint96 lastLnImpliedRate;
+  uint96 oracleRate;
+  uint32 lastTradeTime;
+  uint8 _reentrancyStatus;
+  // 1 SLOT = 232 bits
+  }
+With the following architecture of writing the state:
+Listing 3. The function which resets the reentrancy lock
+function _writeState(MarketState memory market) internal {
+  MarketStorage memory tempStore;
+  tempStore.totalPt = market.totalPt.Int128();
+  tempStore.totalScy = market.totalScy.Int128();
+  tempStore.lastLnImpliedRate = market.lastLnImpliedRate.Uint96();
+  tempStore.oracleRate = market.oracleRate.Uint96();
+  tempStore.lastTradeTime = market.lastTradeTime.Uint32();
+  _storage = tempStore;
+  emit UpdateImpliedRate(block.timestamp, market.lastLnImpliedRate);
+}
+Each time the state is written, the reentrancy lock is set to zero, and in the
+current context, the function could be entered again.
+Although this is not a problem when _writeState is at the end of a function, it
+presents potential risks.
+Recommendation
+Change _writeState to preserve the current reentrancy lock state and not
+reset it.
+===========================================================================
+W5: Dynamic config potential inconsistency
+Impact: Warning Likelihood: N/A
+Target: PendleMarket Type: Front-running
+Description
+PendleMarket is using a dynamic config in its readState method.
+function readState(bool updateRateOracle) public view returns (MarketState
+memory market) {
+  MarketStorage memory local = _storage;
+  market.totalPt = local.totalPt;
+  market.totalScy = local.totalScy;
+  market.totalLp = totalSupply().Int();
+  market.oracleRate = local.oracleRate;
+  (
+  market.treasury,
+  market.lnFeeRateRoot,
+  market.rateOracleTimeWindow,
+  market.reserveFeePercent
+  ) = IPMarketFactory(factory).marketConfig(); ①
+  ...
+① dynamic config
+There is a possibility that a change of marketConfig can have an undesired
+impact on pending transactions where inputs were chosen according to the
+old state.
+Recommendation
+We haven’t identified any critical scenarios. Only ones that affect the Trust
+Model include immediate change of fees (lnFeeRateRoot) or treasury address
+and so we decided to include it in the report.
+===========================================================================
+I1: Redundant cycle in RewardManager
+Impact: Informational Likelihood: N/A
+Target: RewardManager Type: Gas
+optimization
+Description
+In RewardManager there is a function _initGlobalReward to initialize the
+indexes of all reward tokens. The function loops through all reward tokens
+and sets their index to the initial value if the current index value equals zero.
+function _initGlobalReward(address[] memory rewardTokens) internal virtual
+{
+  for (uint256 i = 0; i < rewardTokens.length; ++i) {
+  if (globalReward[rewardTokens[i]].index == 0) {
+  globalReward[rewardTokens[i]].index = INITIAL_REWARD_INDEX;
+  }
+  }
+  }
+When set, the index value will never go down to zero. Therefore, it makes
+sense to call this function only once.
+However, this function is being called each time in _updateGlobalReward (lines
+82-83):
+address[] memory rewardTokens = getRewardTokens();
+_initGlobalReward(rewardTokens);
+_updateGlobalReward is called before every SCYBaseWithRewards token
+transfer (in _beforeTokenTransfer transfer hook), in every redeemReward and
+many times elsewhere.
+Recommendation
+If there is no specific reason to call _initGlobalReward each time, adjust the
+contract to calling it only once in the constructor or having a variable bool
+_initialized so that the function is called only once.
+===========================================================================
+I2: Same function names across the project
+Impact: Informational Likelihood: N/A
+Target: * Type: Code quality
+Description
+Several functions have identical name but different content or at least very
+similiar name, e.g. swapScyForExactPt exists in context of PendleMarket:
+Listing 4. PendleMarket
+function swapScyForExactPt(
+  address receiver,
+  uint256 exactPtOut,
+  uint256 maxScyIn,
+  bytes calldata data
+) external nonReentrant returns (uint256 netScyIn, uint256 netScyToReserve)
+{
+  require(block.timestamp < expiry, "MARKET_EXPIRED");
+  MarketState memory market = readState(true);
+  (netScyIn, netScyToReserve) = market.swapScyForExactPt(
+  SCYIndexLib.newIndex(SCY),
+  exactPtOut,
+  block.timestamp,
+  true
+  );
+  require(netScyIn <= maxScyIn, "scy in exceed limit");
+  IERC20(PT).safeTransfer(receiver, exactPtOut);
+  IERC20(SCY).safeTransfer(market.treasury, netScyToReserve);
+  if (data.length > 0) {
+  IPMarketSwapCallback(msg.sender).swapCallback(exactPtOut.Int(),
+netScyIn.neg(), data);
+  }
+  // have received enough SCY
+  require(market.totalScy.Uint() <= IERC20(SCY).balanceOf(address(
+this)));
+  _writeState(market);
+  emit Swap(receiver, exactPtOut.Int(), netScyIn.neg(), netScyToReserve);
+}
+and also in MarketMathAux.
+Listing 5. MarketMathAux
+function swapScyForExactPt(
+  MarketState memory market,
+  SCYIndex index,
+  uint256 exactPtToAccount,
+  uint256 blockTime,
+  bool updateState
+) internal pure returns (uint256 netScyToMarket, uint256 netScyToReserve) {
+  (int256 _netScyToAccount, int256 _netScyToReserve) = MarketMathCore
+.executeTradeCore(
+  market,
+  index,
+  exactPtToAccount.Int(),
+  blockTime,
+  updateState
+  );
+  netScyToMarket = _netScyToAccount.neg().Uint();
+  netScyToReserve = _netScyToReserve.Uint();
+}
+This approach can cause unknown bugs (e.g., by mistake) in future
+development.
+Recommendation
+Adjust the architecture of the project to prevent duplicities and unnecessary
+complexity.
+===========================================================================
+I3: Unused code
+Impact: Informational Likelihood: N/A
+Target: PendleMarket Type: Dead code
+Description
+Line 22 is unused.
+  using Math for uint128;
+Recommendation
+Remove unused or unnecessary code from the project.

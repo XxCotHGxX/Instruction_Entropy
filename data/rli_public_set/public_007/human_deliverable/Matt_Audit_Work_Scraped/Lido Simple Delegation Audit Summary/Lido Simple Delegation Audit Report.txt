@@ -1,0 +1,153 @@
+========================================================================
+Finding #W1: Usage of solcoptimizer
+Severity : Warning
+Description:
+The Solidity compiler optimizer settings could lead to unintended behavior or suboptimal gas usage.
+Recommendation:
+Review and update the Solidity compiler optimizer settings to ensure optimal performance and behavior.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/e3cef8c
+========================================================================
+
+========================================================================
+Finding #W2: Delegation does not expire
+Severity : Warning
+Description:
+The delegation mechanism currently does not support expiration, which can lead to unintended long-term delegation and centralization risks.
+Recommendation:
+Consider implementing expiration logic for delegations to limit delegation duration and reduce centralization risks.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/e3cef8c
+========================================================================
+
+========================================================================
+Finding #W3: The initializer can be front-run
+Severity : Warning
+Description:
+The contract initializer lacks protection against front-running, which may allow attackers to interfere during contract setup.
+Recommendation:
+Add front-running protections such as appropriate access controls or use of initialization patterns that mitigate race conditions.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/e3cef8c
+========================================================================
+
+========================================================================
+Finding #W4: The initializer does not have validations for the correctness of _token
+Severity : Warning
+Description:
+The initializer function does not validate the _token address parameter, which can cause incorrect or malicious token addresses to be set.
+Recommendation:
+Add validation checks to ensure the _token parameter is a valid and expected token contract address.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/e3cef8c
+========================================================================
+
+========================================================================
+Finding #W5: Declaration shadowing
+Severity : Warning
+Description:
+Some variables are shadowed by declarations within inner scopes, which can lead to confusion or bugs.
+Recommendation:
+Avoid variable shadowing by using unique variable names or refactoring scopes.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/e3cef8c
+========================================================================
+
+========================================================================
+Finding #W6: Unused function parameters
+Severity : Warning
+Description:
+Certain functions declare parameters that are never used within the function body, leading to possible confusion or wasted gas.
+Recommendation:
+Remove unused parameters or document their presence if intended for interface compatibility.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/e3cef8c
+========================================================================
+
+========================================================================
+Finding #W7: Outdated Solidity version
+Severity : Warning
+Description:
+The codebase uses an outdated Solidity compiler version (0.4.24 in Revision 1.0), missing newer compiler improvements and security fixes.
+Recommendation:
+Upgrade to a more recent Solidity compiler version (such as 0.8.x) to benefit from language improvements, security enhancements, and better tooling.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/079dd88
+========================================================================
+
+========================================================================
+Finding #W8: Division rounding error
+Severity : Warning
+Description:
+Some arithmetic operations may cause unintended rounding errors during division.
+Recommendation:
+Use safe math operations or explicitly handle rounding behavior where division occurs.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/e3cef8c
+========================================================================
+
+========================================================================
+Finding #W9: Set delegate with zero voting power
+Severity : Warning
+Description:
+Delegates can be set even when they have zero voting power, which can cause misleading delegation states.
+Recommendation:
+Add checks to prevent setting delegates that currently have zero voting power.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/e3cef8c
+========================================================================
+
+========================================================================
+Finding #W10: Inconsistent attemptVoteForMultiple checks
+Severity : Warning
+Description:
+The attemptVoteForMultiple function has inconsistent validation checks, which could lead to unexpected behavior.
+Recommendation:
+Standardize and strengthen validation logic in attemptVoteForMultiple to ensure correct voting behavior.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/e3cef8c
+========================================================================
+
+========================================================================
+Finding #I1: Unused function
+Severity : Informational
+Description:
+There exists a function in the code that is never called or referenced.
+Recommendation:
+Consider removing the unused function or document its purpose if intended for future use.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/079dd88
+========================================================================
+
+========================================================================
+Finding #I2: Reserved keyword
+Severity : Informational
+Description:
+Some variables or functions use names that are reserved keywords or may cause confusion.
+Recommendation:
+Rename variables or functions to avoid using reserved keywords.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/e3cef8c
+========================================================================
+
+========================================================================
+Finding #I3: Cache array length
+Severity : Informational
+Description:
+Array length is accessed multiple times within loops, which is inefficient.
+Recommendation:
+Cache the array length in a local variable before looping to reduce gas costs.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/e3cef8c
+========================================================================
+
+========================================================================
+Finding #I4: Incorrect NatSpec format
+Severity : Informational
+Description:
+Some NatSpec comments do not follow the expected formatting, potentially reducing readability and tooling support.
+Recommendation:
+Update NatSpec comments to follow the Solidity documentation guidelines.
+Repository
+URL: https://github.com/lidofinance/simple-delegation/commit/e3cef8c
+========================================================================

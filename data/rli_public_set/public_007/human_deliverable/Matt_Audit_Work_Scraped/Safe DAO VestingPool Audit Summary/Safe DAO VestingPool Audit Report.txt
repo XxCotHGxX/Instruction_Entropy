@@ -1,0 +1,45 @@
+========================================================================
+Finding #1: Pool Manager role
+Severity : Medium
+Description:
+The Pool Manager role requires careful handling to avoid potential mismanagement or unauthorized access.
+
+Recommendation:
+Ensure proper role-based access control mechanisms are implemented and reviewed for the Pool Manager role.
+
+Repository
+URL: https://github.com/safe-global/safe-token
+========================================================================
+Finding #2: Public functions
+Severity : Informational
+Description:
+Some functions are declared public without restrictions, which might expose unnecessary access points.
+
+Recommendation:
+Review visibility of all functions and restrict access where possible to reduce attack surface.
+
+Repository
+URL: https://github.com/safe-global/safe-token
+========================================================================
+Finding #3: Typos in the comments
+Severity : Informational
+Description:
+Minor typographical errors were found in code comments, which may reduce readability.
+
+Recommendation:
+Correct typos in comments to maintain clear and professional documentation.
+
+Repository
+URL: https://github.com/safe-global/safe-token
+========================================================================
+Finding #4: Possible gas optimization in claimVestedTokens()
+Severity : Informational
+Description:
+Certain parts of the `claimVestedTokens()` function could be optimized to reduce gas costs.
+
+Recommendation:
+Refactor the function to optimize gas usage without affecting functionality.
+
+Repository
+URL: https://github.com/safe-global/safe-token
+========================================================================

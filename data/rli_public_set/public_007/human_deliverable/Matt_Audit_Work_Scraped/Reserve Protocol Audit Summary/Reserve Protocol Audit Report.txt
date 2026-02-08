@@ -1,0 +1,284 @@
+Repository URL: https://github.com/reserve-protocol/protocol/blob/5cc6e94d9adfdab636a3cf3bfa72888bd6a6020d/contracts/p1/*.sol
+Full commit hash: 6559fcd
+========================================================================
+Findings Summary:
+==================
+M1: Unlimited allowance
+Medium severity issue
+Impact: High Likelihood: Low
+Target: p1/BackingManager.sol Type: Data validation
+Listing 1. Excerpt from BackingManager.grantRTokenAllowance
+47 erc20.approve(address(main.rToken()), type(uint256).max);
+Description
+The BackingManager contract grants unlimited (type(uint256).max) allowance
+to main.rToken() in the grantRTokenAllowance function.
+Exploit scenario
+A malicious RToken contract can spend or drain all user’s funds.
+Recommendation
+Allow the contract to operate only with necessary, limited amounts.
+Fix 1.1
+Acknowledged. Client’s response:
+" We acknowledge that BackingManager grants unlimited allowance to
+main.rToken(), and that a malicious RToken contract could spend or drain all
+user’s funds. However, an attacker with the ability to introduce malicious
+code to the RToken contract address also has the ability to introduce
+malicious code to the BackingManager contract; these two contracts are
+trusted contracts in the same security domain. While this does violate the
+heuristic of minimizing privileges, adding additional security boundaries
+Blockchain audits | Blockchain security assessment
+Blockchain audits | Blockchain security assessment
+throughout our system would substantially increase the system’s complexity,
+which in our judgment yields a more secure system. "
+===========================================================================
+M2: Downcasting overflow
+Medium severity issue
+Impact: High Likelihood: Low
+Target: p1/Furnace.sol Type: Overflow
+Listing 2. Excerpt from Furnace.melt
+41 uint32 numPeriods = uint32((block.timestamp) - lastPayout) /
+  period;
+Listing 3. Excerpt from StRSRP1._payoutRewards
+354 uint32 numPeriods = (uint32(block.timestamp) - payoutLastPaid)
+  / rewardPeriod;
+Listing 4. Excerpt from GnosisTrade.stateTransition
+76 endTime = uint32(block.timestamp) + auctionLength;
+Listing 5. Excerpt from BasketLib.empty
+55 self.timestamp = uint32(block.timestamp);
+Listing 6. Excerpt from BasketLib.copy
+68 self.timestamp = uint32(block.timestamp);
+Listing 7. Excerpt from BasketLib.add
+85 self.timestamp = uint32(block.timestamp);
+Description
+The protocol uses potentially dangerous downcasting to uint32 in many
+contracts listed above.
+Exploit scenario
+Downcasting the timestamp to uint32 will cause an overflow and protocol
+misbehavior on February 7, 2106.
+Recommendation
+Although the likelihood of this issue is low and the potential threat would
+appear decades in the future, we recommend using a bigger data type e.g.
+uint40. The gas cost would not increase much, and the protocol will be
+future-proof. Also, we believe gas costs will decrease after a few Ethereum
+upgrades.
+Fix 1.1
+Fixed.
+===========================================================================
+M3: Insufficient data validation
+Medium severity issue
+Impact: High Likelihood: Low
+Target: p1/Broker.sol,
+p1/RevenueTrader.sol,
+p1/Main.sol
+Type: Data validation
+Description
+The contracts have insufficient data validation for parameters that are
+passing addresses in their init functions.
+• tokenToBuy_ in RevenueTrader.sol
+• rsr_ in Main.sol
+• gnosis_ in Broker.sol
+• tradeImplementation_ in Broker.sol
+Exploit scenario
+By accident, an incorrect tokenToBuy_ is passed to the init function. Instead
+of reverting, the call succeeds.
+Recommendation
+Add zero-address check for all mentioned parameters.
+Fix 1.1
+Fixed.
+===========================================================================
+W1: Code duplications
+Impact: Warning Likelihood: N/A
+Target: plugins/assets/*Collateral.sol Type: Best practices
+Description
+Collateral contracts contain a lot of duplicated code. Mainly in refresh and
+status functions. Code duplications can lead to bugs during development.
+Also, code duplications decrease the readability of the code and effective
+maintainability.
+Recommendation
+Refactor the architecture to decrease or completely avoid code duplications.
+Fix 1.1
+Acknowledged. Client’s response:
+" Acknowledged, and this degree of code duplication is intentional. We’re
+aiming to keep the plugin semantics as simple and intuitive as possible, and
+each plugin as readable as possible. Previous versions, where we’d aimed to
+reduce code duplication, were overall less readable and less maintainable
+than what we currently have. "
+===========================================================================
+W2: Basket nonce double increment
+Impact: Warning Likelihood: N/A
+Target: p1/BasketHandler.sol Type: Data validation
+Description
+The copy function increments the Basket.nonce by 2. The first increase
+happens in the empty function:
+Listing 8. Excerpt from BasketLib.empty
+54 self.nonce++;
+Then the second increase in the copy function itself:
+Listing 9. Excerpt from BasketLib.copy
+67 self.nonce++;
+Recommendation
+Check whether this is intended behavior; otherwise, fix this issue.
+Fix 1.1
+Fixed. Nonce were remowed from the BasketLib library.
+===========================================================================
+W3: Enum to uint casting
+Impact: Warning Likelihood: N/A
+Target: p1/BasketHandler.sol Type: Best practices
+Listing 10. Excerpt from BasketHandlerP1.status
+201 if (uint256(s) > uint256(status_)) status_ = s;
+Description
+Casting enum to uint ordinal values can be dangerous, and comparing them
+using < and > operators even more.
+Vulnerability scenario
+Unaware developer changes the enum values or order, which can lead to
+critical system misbehaviors.
+Recommendation
+Use explicit == conditions for enums.
+Fix 1.1
+Function worseThans is now used to compare the values.
+===========================================================================
+W4: Wrong revert message
+Impact: Warning Likelihood: N/A
+Target: p1/BasketHandler.sol Type: Data validation
+Listing 11. Excerpt from BasketHandlerP1.refreshBasket
+120 require(!main.pausedOrFrozen() || main.hasRole(OWNER,
+  _msgSender()), "paused or frozen");
+Description
+The require statement reverts with the message "paused or frozen" when the
+protocol is not pausedOrFrozen and main.hasRole(OWNER, _msgSender()) returns
+false. This message does not reflect the real reason for the revert.
+Also the statement main.hasRole(OWNER, _msgSender()) is duplicated
+governance modifier.
+Recommendation
+Use the governance modifier on the refreshBasket function and change the
+require statement to following:
+require(!main.pausedOrFrozen(), "paused or frozen");
+Alternatively, split the require statement into two separate require
+conditions with self-describing revert messages.
+require(main.hasRole(OWNER, _msgSender()), "not the owner");
+require(!main.pausedOrFrozen(), "paused or frozen");
+Fix 1.1
+The error message has been changed to "basket unrefreshable". The
+governance modifier was not added to the refreshBasket function.
+===========================================================================
+W5: Support for meta-transactions
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Identity forgery
+Description
+The protocol is using OpenZeppelin Context for potential support for meta transactions in the future. Meta-transaction support creates a new attack
+surface via the _msgSender function. In a traditional smart contract, users can
+rely upon the msg.sender value is returning the expected value. However,
+when a body of the _msgSender function is adjusted with some additional
+logic, it can cause different behavior.
+For example, in the following case, if a user is the trusted forwarder, he/she
+can pass any address to the msg.data and thus impersonate anyone.
+Listing 12. Example of the malicious _msgSender function implementation
+  function _msgSender() internal override virtual view returns (address
+ret) {
+  if (msg.data.length >= 20 && isTrustedForwarder(msg.sender)) {
+  // At this point we know that the sender is a trusted
+forwarder,
+  // so we trust that the last bytes of msg.data are the verified
+sender address.
+  // extract sender address from the end of msg.data
+  assembly {
+  ret := shr(96,calldataload(sub(calldatasize(),20))) ①
+  }
+  } else {
+  ret = msg.sender;
+  }
+  }
+① This line will cut the last 20 bytes (address or another payload) from
+msg.data and return it
+Ackee Blockchain wrote a blog post about this issue, and it is also mentioned
+in EIP-2771 in the Security Considerations section.
+Recommendation
+Pay special attention to the _msgSender function. If meta-transactions will be
+supported in the future, ensure the trusted forwarder address is securely
+handled.
+Fix 1.1
+Acknowledged. Client’s response:
+" It seems true that governance should be warned against this type of failure
+mode. We will include such a warning in our documentation for governance,
+but do not intend to modify the code. "
+===========================================================================
+W6: Usage of solc optimizer
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Compiler
+configuration
+Description
+The project uses solc optimizer (determined by dotfile). Enabling solc
+optimizer may lead to unexpected bugs.
+The Solidity compiler was audited in November 2018, and the audit concluded
+that the optimizer may not be safe.
+Vulnerability scenario
+A few months after deployment, a vulnerability is discovered in the optimizer.
+As a result, it is possible to attack the protocol.
+Recommendation
+Until the solc optimizer undergoes more stringent security analysis, opt-out
+using it. This will ensure the protocol is resilient to any existing bugs in the
+optimizer.
+Fix 1.1
+Acknowledged. Client’s response:
+" Yes, we acknowledge the additional technical risk that results from using
+solc’s optimization features. We have measured the gas savings from
+optimizations, and have concluded that:
+• Many of our contracts exceed the contract size limit without optimization.
+We prefer the risks associated with using the optimizer to the risks
+associated with the increasing complexity that would arise from breaking
+single, coherent contracts into multiple deployments.
+• The gas savings on our three major user functions (RToken issue, vest, and
+redeem) are 14%, 11%, and 18%. We expect that our users will benefit more
+from these gas savings than they are likely to lose from the risk of
+optimizer failure.
+We mitigate (but do not eliminate) this risk in three main ways: - We compile
+our contracts using the default runs value of 200 in all of our core system
+contracts. This ensures that the optimizations that we are using are the most
+commonly-used optimizations, and thus optimizer bugs are marginally less
+likely. - We are not using the very newest version of solc. Instead, we’ve
+chosen our compiler version to be as old as possible, while still including the
+language features on which we rely and any known security patches that
+may affect the correctness of our code. Thus, it’s marginally less likely for
+serious compiler bugs to exist in that version. - Our system is upgradable and
+contains an emergency-stop mechanism. While this cannot eliminate the
+possibility of zero-day attacks due to as-yet unknown optimizer bugs, if the
+community learns about optimizer bugs that affect the code we’ve already
+deployed, it can likely pause the whole system more quickly than the system
+can be attacked, and then it should be relatively straightforward to upgrade
+the whole system using contracts compiled differently. "
+===========================================================================
+I1: Unnecessary function override
+Impact: Info Likelihood: N/A
+Target: Type: Best practices
+Description
+The contract Collateral overrides the function price from Asset and IAsset,
+but the Asset contract already implements this function using the same logic.
+Listing 13. Excerpt from Collateral.price
+37 function price() public view virtual override(Asset, IAsset) returns
+  (uint192) {
+38 return chainlinkFeed.price(oracleTimeout);
+39 }
+Listing 14. Excerpt from Asset.price
+49 function price() public view virtual returns (uint192) {
+50 return chainlinkFeed.price(oracleTimeout);
+51 }
+Another occurrence of this finding is situated in the Main contract. The
+hasRole function overrides IAccessControlUpgradeable and
+AccessControlUpgradeable, but calls only super.hasRole(role, account).
+Listing 15. Excerpt from MainP1.hasRole
+59 function hasRole(bytes32 role, address account)
+60 public
+61 view
+62 override(IAccessControlUpgradeable, AccessControlUpgradeable)
+63 returns (bool)
+64 {
+65 return super.hasRole(role, account);
+66 }
+Recommendation
+Remove unnecessary function overridings if they have no intended reason.
+Otherwise, ignore this informational finding.
+Fix 1.1
+Acknowledged. Client’s response:
+" We’re not overriding the named functions to change their semantics, we’re
+overriding this function because the contract type signatures demand it.
+We’re not happy about it either, but (a) the system won’t compile without
+this explicit override, and (b) we consider it out-of-scope for the current
+project to improve the language. "

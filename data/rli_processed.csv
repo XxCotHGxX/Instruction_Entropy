@@ -1,0 +1,11 @@
+task_id,instruction_entropy,artifact_coupling,human_completion_time,project_cost,category,success_label
+public_001,4594.169642857143,5,0,0,Unknown,0
+public_002,3206.056856187291,1,0,0,Unknown,0
+public_003,380.2936610608021,71,0,0,Unknown,0
+public_004,7729.373134328358,8,0,0,Unknown,0
+public_005,914.6276346604216,6,0,0,Unknown,0
+public_006,2465.746355685131,44,0,0,Unknown,0
+public_007,1019.0887096774194,55,0,0,Unknown,0
+public_008,1081.3624161073826,4,0,0,Unknown,0
+public_009,9.580838323353293,5,0,0,Unknown,0
+public_010,6462.48115942029,77,0,0,Unknown,0

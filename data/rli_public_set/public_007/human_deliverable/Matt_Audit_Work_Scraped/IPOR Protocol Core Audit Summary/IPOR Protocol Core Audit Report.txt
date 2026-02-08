@@ -1,0 +1,468 @@
+========================================================================
+Finding #1: Profit & loss accounted twice when unwinding
+Severity : Critical
+Description:
+Profit and loss are incorrectly accounted twice during the unwinding process, leading to potential discrepancies in calculations.
+
+Recommendation:
+Ensure that P&L is only accounted once by reviewing the unwinding logic and adjusting the calculation accordingly.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #2: Unwinding formula
+Severity : High
+Description:
+Issues with the formula used for unwinding swaps which may lead to incorrect results or imbalanced outcomes.
+
+Recommendation:
+Refactor the unwinding formula to ensure it correctly reflects intended financial behavior.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #3: Broken reentrancy lock
+Severity : High
+Description:
+Reentrancy lock mechanism was not functioning correctly, exposing the protocol to reentrancy attacks.
+
+Recommendation:
+Fix the lock logic to correctly prevent reentrancy scenarios.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #4: Unwinding fee accounted twice in liquidityPool balance
+Severity : High
+Description:
+The unwinding fee is mistakenly accounted twice, inflating the liquidity pool balance.
+
+Recommendation:
+Adjust the logic to ensure fees are accounted only once.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #5: INTEREST_FROM_STRATEGY_BELOW_ZERO reverts
+Severity : Medium
+Description:
+The function reverts unexpectedly due to below-zero interest from the strategy.
+
+Recommendation:
+Add proper bounds checking and handling for zero or negative interest results.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #6: Inaccurate hypothetical interest formula
+Severity : Medium
+Description:
+The formula used for hypothetical interest calculations is not accurate.
+
+Recommendation:
+Update the formula to better represent realistic interest behavior.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #7: Pool contribution is not updated when liquidity is redeemed
+Severity : Medium
+Description:
+Redemptions do not update the pool’s contribution data correctly.
+
+Recommendation:
+Ensure the data structure tracking contributions is updated upon liquidity redemption.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #8: Incorrect event data
+Severity : Medium
+Description:
+Some emitted events have incorrect or misleading data fields.
+
+Recommendation:
+Review and correct all event emissions to ensure consistency with internal state.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #9: Unwinding fee normalization
+Severity : Medium
+Description:
+Fee normalization logic for unwinding may result in incorrect fee amounts.
+
+Recommendation:
+Normalize fee calculations to ensure precision and consistency.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #10: IPOR_508 reverts during deposit
+Severity : Medium
+Description:
+IPOR_508 reverts when certain deposit conditions are met.
+
+Recommendation:
+Fix logic to allow deposits or provide meaningful error messages.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #11: Liquidation deposits accounted into LP balance
+Severity : Medium
+Description:
+Liquidation deposits are incorrectly included in LP balance.
+
+Recommendation:
+Separate these balances to avoid accounting errors.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #12: Value in incorrect decimals
+Severity : Low
+Description:
+Some values are stored or calculated using incorrect decimals.
+
+Recommendation:
+Fix decimal precision in all affected logic.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #13: Liquidation deposit accounted twice in rebalancing logic
+Severity : Low
+Description:
+Deposit values are double-counted in rebalancing routines.
+
+Recommendation:
+Review and fix the logic to prevent double counting.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #14: Aave incorrect APY formula
+Severity : Low
+Description:
+APY formula for Aave is incorrectly implemented.
+
+Recommendation:
+Correct the formula to align with actual Aave behavior.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #15: Close swap and redeem transaction reverts
+Severity : Low
+Description:
+This combined transaction sometimes reverts unexpectedly.
+
+Recommendation:
+Investigate and fix root cause in transaction logic.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #16: No data validation while setting redeemFeeRateEth
+Severity : Low
+Description:
+Missing validation could lead to incorrect fee rate settings.
+
+Recommendation:
+Add proper input validation for redeemFeeRateEth.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #17: Close swap insufficient balance revert
+Severity : Low
+Description:
+Swap close fails due to insufficient balance in edge cases.
+
+Recommendation:
+Add safeguards and better balance checks.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #18: IporProtocolRouter return & revert data dropped
+Severity : Low
+Description:
+Returned and reverted data from calls is dropped.
+
+Recommendation:
+Ensure correct bubbling of returned/reverted data.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #19: Usage of solc optimizer
+Severity : Warning
+Description:
+Solidity optimizer is used but not fully audited.
+
+Recommendation:
+Ensure optimizer settings are reviewed and tested.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #20: SoapIndicatorRebalanceLogic underflow
+Severity : Warning
+Description:
+Potential underflow in rebalance logic calculations.
+
+Recommendation:
+Add underflow checks and test edge cases.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #21: Insufficient data validation in the constructor
+Severity : Warning
+Description:
+Constructor allows insufficiently validated data.
+
+Recommendation:
+Add strict input validation in constructors.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #22: Missing array length check in the initialize function
+Severity : Warning
+Description:
+No check for array length consistency in initialization.
+
+Recommendation:
+Add array length assertions to ensure consistency.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #23: _calculateRedeemedCollateralRatio underflow
+Severity : Warning
+Description:
+Risk of underflow in this calculation logic.
+
+Recommendation:
+Add appropriate checks or use safe math.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #24: Constant block production relied on
+Severity : Warning
+Description:
+Code assumes constant block times, which may not hold.
+
+Recommendation:
+Avoid relying on block timing for logic.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #25: Github secrets leak
+Severity : Warning
+Description:
+Secrets may have been exposed via GitHub.
+
+Recommendation:
+Rotate credentials and check history for exposure.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #26: Infinite approval
+Severity : Warning
+Description:
+Code allows infinite token approvals.
+
+Recommendation:
+Restrict approvals to minimal necessary limits.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #27: Missing swap direction validation
+Severity : Warning
+Description:
+Swap direction is not always properly validated.
+
+Recommendation:
+Add strict validation to prevent invalid directions.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #28: Setting array max index in constructor
+Severity : Warning
+Description:
+Constructor sets array index to max, which may lead to bugs.
+
+Recommendation:
+Use safer default values for array indexing.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #29: IporProtocolRouter memory constraints violation
+Severity : Warning
+Description:
+Risk of memory constraints being violated in router.
+
+Recommendation:
+Optimize data structures and memory usage.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #30: Unreachable code
+Severity : Informational
+Description:
+Some code paths can never be reached.
+
+Recommendation:
+Remove or refactor unreachable code.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #31: Use type(uint256).max instead of integer literal
+Severity : Informational
+Description:
+Integer literals are used instead of proper constants.
+
+Recommendation:
+Use type(uint256).max for clarity and safety.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #32: Duplicated code
+Severity : Informational
+Description:
+Same logic repeated in multiple places.
+
+Recommendation:
+Refactor repeated code into common functions.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #33: Redundant require
+Severity : Informational
+Description:
+Some require statements are unnecessary.
+
+Recommendation:
+Remove redundant checks to streamline logic.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #34: Using magic numbers
+Severity : Informational
+Description:
+Hardcoded constants (magic numbers) reduce readability.
+
+Recommendation:
+Define and use named constants.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #35: Use forceApprove instead of safeApprove
+Severity : Informational
+Description:
+safeApprove may revert when allowance is non-zero.
+
+Recommendation:
+Use forceApprove to avoid failure when resetting allowances.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #36: User can lose funds if the protocol is used incorrectly
+Severity : Informational
+Description:
+Improper use may result in user fund loss.
+
+Recommendation:
+Improve UX and documentation to prevent misuse.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #37: Mixing _msgSender() and msg.sender across the codebase
+Severity : Informational
+Description:
+Inconsistent use of sender functions can cause logic issues.
+
+Recommendation:
+Standardize use of one approach across all contracts.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #38: Redundant logging of block.timestamp
+Severity : Informational
+Description:
+block.timestamp is logged redundantly in some functions.
+
+Recommendation:
+Remove duplicate logging for efficiency.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================
+========================================================================
+Finding #39: Unused code
+Severity : Informational
+Description:
+Code that is never called or used exists in the codebase.
+
+Recommendation:
+Clean up and remove unused code.
+
+Repository
+URL: https://github.com/IPOR-Labs/ipor-protocol/commit/125b3f3
+========================================================================

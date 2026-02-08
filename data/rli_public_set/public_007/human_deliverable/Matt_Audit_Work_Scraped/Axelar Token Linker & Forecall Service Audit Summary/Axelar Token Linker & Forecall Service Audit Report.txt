@@ -1,0 +1,77 @@
+========================================================================
+Finding #1: The forecall and forecallWithToken can be called repeatedly with the same payload  
+Severity : High  
+Description:  
+The functions `forecall` and `forecallWithToken` lack mechanisms to prevent repeated calls with the same payload. This could allow unintended or malicious execution of the same message multiple times.
+
+Recommendation:  
+Implement replay protection to prevent repeated execution of the same payload.
+
+========================================================================
+Finding #2: The tokenAddress is missing zero-address check  
+Severity : Medium  
+Description:  
+The `tokenAddress` parameter is not validated against being the zero address. This could result in logic errors or unexpected behavior.
+
+Recommendation:  
+Add a `require(tokenAddress != address(0))` check to prevent invalid configuration.
+
+========================================================================
+Finding #3: TokenLinker has insufficient data validation  
+Severity : Medium  
+Description:  
+There is a general lack of thorough validation on input data in the TokenLinker contract, which could lead to edge-case exploits or unexpected behaviors.
+
+Recommendation:  
+Enhance data validation across TokenLinker functions to ensure correctness and robustness.
+
+========================================================================
+Finding #4: Usage of solc optimizer  
+Severity : Warning  
+Description:  
+Solidity optimizer is enabled. While this is generally beneficial, it can sometimes produce unexpected results and should be carefully evaluated.
+
+Recommendation:  
+Ensure testing covers any optimization edge cases, or disable the optimizer during development and enable it only for final deployments.
+
+========================================================================
+Finding #5: Floating dependency on AxelarGateway  
+Severity : Warning  
+Description:  
+The contract depends on a floating reference to AxelarGateway, which may be updated or changed, potentially introducing compatibility or security issues.
+
+Recommendation:  
+Pin the dependency to a specific version and audit that version thoroughly.
+
+========================================================================
+Finding #6: Multiple ways to receive ether can lead to loss of funds  
+Severity : Warning  
+Description:  
+The contract allows ETH to be received through various mechanisms, which can cause ambiguity or funds being stuck if not handled correctly.
+
+Recommendation:  
+Restrict and clearly document allowed ways of receiving ether and handle unexpected inputs.
+
+========================================================================
+Finding #7: The forecall function is missing any checks by default  
+Severity : Warning  
+Description:  
+The `forecall` function lacks default checks, making it potentially unsafe for general use without external safeguards.
+
+Recommendation:  
+Add internal validation or restrict usage contextually to avoid misuse.
+
+========================================================================
+Finding #8: Typo in the error name  
+Severity : Informational  
+Description:  
+A typo exists in the naming of an error, which could reduce code clarity and documentation consistency.
+
+Recommendation:  
+Correct the error name to maintain clean and readable code.
+
+========================================================================
+Repositories  
+Token Linker: https://github.com/axelarnetwork/token-linker (Commit: 5e1d4bb)  
+Axelar Utils: https://github.com/axelarnetwork/axelar-utils-solidity (Commit: db238d7)
+========================================================================

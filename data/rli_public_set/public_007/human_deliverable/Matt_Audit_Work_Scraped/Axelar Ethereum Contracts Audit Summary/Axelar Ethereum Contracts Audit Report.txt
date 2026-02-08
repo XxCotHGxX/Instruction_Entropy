@@ -1,0 +1,100 @@
+========================================================================
+Finding #1: Ignored return values on LocalAsset interface
+Severity : High
+Description:
+The LocalAsset interface used in the Axelar contracts ignores return values in function calls. This can result in incorrect assumptions about successful execution, especially when interacting with external contracts that may fail silently.
+
+Recommendation:
+Check and handle all return values properly when interacting with external contracts to ensure correctness and safety of operations.
+
+Repository
+URL: https://github.com/axelarnetwork/axelar-xc20-wrapper
+========================================================================
+Finding #2: Floating dependency on AxelarGateway
+Severity : Medium
+Description:
+The contract depends on a floating reference to the AxelarGateway, which can lead to inconsistencies or unexpected behavior if the referenced gateway changes or behaves differently.
+
+Recommendation:
+Use fixed versions or thoroughly verified dependencies instead of floating references.
+
+Repository
+URL: https://github.com/axelarnetwork/axelar-xc20-wrapper
+========================================================================
+Finding #3: Pitfalls of upgradeability
+Severity : Warning
+Description:
+The current upgradeability pattern may introduce risks or unintended behaviors if not carefully maintained. Upgradeable contracts require careful handling to ensure storage layout and logic consistency.
+
+Recommendation:
+Use well-established upgradeability frameworks and document storage layout assumptions clearly.
+
+Repository
+URL: https://github.com/axelarnetwork/axelar-cgp-solidity
+========================================================================
+Finding #4: The owner can change arbitrarily operatorship and potentially cause DoS
+Severity : Warning
+Description:
+The owner has unchecked power to change operatorship, which can potentially lead to denial of service or unexpected contract behavior.
+
+Recommendation:
+Limit owner's access with role-based restrictions or time-lock mechanisms to reduce risk.
+
+Repository
+URL: https://github.com/axelarnetwork/axelar-xc20-wrapper
+========================================================================
+Finding #5: XC20Wrapper owner has escalated privileges
+Severity : Warning
+Description:
+The owner of the XC20Wrapper contract has significant privileges, which may pose a centralization risk or security concern.
+
+Recommendation:
+Document the risks clearly, reduce privilege scope, or enforce multi-signature ownership for critical functions.
+
+Repository
+URL: https://github.com/axelarnetwork/axelar-xc20-wrapper
+========================================================================
+Finding #6: Missing unit tests
+Severity : Warning
+Description:
+Some of the contract functionalities are not covered by unit tests, which may result in undetected bugs or regressions.
+
+Recommendation:
+Add comprehensive test coverage for all critical functions, especially around access control and upgrade mechanisms.
+
+Repository
+URL: https://github.com/axelarnetwork/axelar-xc20-wrapper
+========================================================================
+Finding #7: Usage of solc optimizer
+Severity : Warning
+Description:
+The contracts use the Solidity optimizer, which can introduce edge-case bugs if not tested thoroughly under optimization settings.
+
+Recommendation:
+Test all contracts with the optimizer enabled and disabled, and document the settings used for deployment.
+
+Repository
+URL: https://github.com/axelarnetwork/axelar-xc20-wrapper
+========================================================================
+Finding #8: Typo in the variable name
+Severity : Informational
+Description:
+A variable name contains a typo, which can reduce readability and increase the chance of misinterpretation by developers.
+
+Recommendation:
+Correct the typo for improved clarity and maintainability.
+
+Repository
+URL: https://github.com/axelarnetwork/axelar-xc20-wrapper
+========================================================================
+Finding #9: Missing events
+Severity : Informational
+Description:
+Some state-changing functions do not emit events, which limits transparency and traceability of operations.
+
+Recommendation:
+Emit events in all functions that affect contract state to improve observability and debugging.
+
+Repository
+URL: https://github.com/axelarnetwork/axelar-xc20-wrapper
+========================================================================

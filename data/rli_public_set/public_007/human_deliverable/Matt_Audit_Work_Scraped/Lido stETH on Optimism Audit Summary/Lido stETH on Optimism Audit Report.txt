@@ -1,0 +1,435 @@
+Repository URL: https://github.com/lidofinance/steth-audit/commit/8f19e11
+Full commit hash: 8f19e1101a211c8f3d42af7ffcb87ab0ebcf750c
+========================================================================
+Findings Summary:
+==================
+L1: Insufficient token rate precision
+Low severity issue
+Impact: Medium Likelihood: Low
+Target: **/* Type: Arithmetics
+Description
+The project is responsible for bridging stETH and wstETH tokens and the
+tokens/shares conversion rate.
+The token rate is computed as 10^18 * stETH.getTotalPooledEther() /
+stETH.getTotalShares() on the Ethereum mainnet and bridged to Optimism.
+To compute the amount of tokens based on the amount of shares on
+Optimism, the following code is used:
+Listing 1. Excerpt from ERC20RebasableBridged
+271 function _getTokensByShares(uint256 sharesAmount_) internal view returns
+  (uint256) {
+272 (uint256 tokensRate, uint256 decimals) = _getTokenRateAndDecimal();
+273 return (sharesAmount_ * tokensRate) / (10 ** decimals);
+274 }
+Due to the division performed while computing the token rate on the mainnet
+and the limited precision of the rate, the value returned from
+_getTokensByShares may be off by a small amount.
+Exploit scenario
+A user bridges 1000 * 10^18 stETH tokens from the Ethereum mainnet to
+Optimism. The correct amount of shares is bridged, but due to the limited
+precision of the token rate, the reported balanceOf is lower by 52 wei than the
+expected value.
+Recommendation
+Increase the token rate precision by using a higher precision factor, e.g.,
+10^27, or pass both the total pooled ether and total shares to Optimism.
+Fix 1.1
+The codebase was refactored. There are several major changes in the
+codebase. First, the type member rate of the DepositData structure in the
+DepositDataCodec contract was changed to uin128 from uint96. The newly
+added TokenRateAndUpdateTimestampProvider now provides the token rate, the
+latest update timestamp and the token rate decimals, which are hardcoded
+to the value 27. On L2, The TokenRateOracle contract was largely refactored,
+including work with newly added 27 decimals for the token rate.
+===========================================================================
+L2: unwrap inconsistent tokens amount in event
+Low severity issue
+Impact: Low Likelihood: Low
+Target: ERC20RebasableBridged.sol Type: Arithmetics
+Description
+The functions unwrap and bridgeUnwrap convert stETH tokens to wstETH
+tokens. Both functions accept the stETH tokens amount that is converted to
+the amount of shares. In order to emit the ERC-20 Transfer event, the shares
+amount is converted back to the stETH tokens amount.
+However, due to roundings and divide-before-multiply data dependency, the
+input amount of tokens and the amount reported in the Transfer event may
+be different, posing an inconsistency.
+See Appendix C for the full data dependency trace.
+Exploit scenario
+A user calls unwrap with 764035550674393190 as the input amount of tokens. The
+Transfer event contains 764035550674393188 as the value and the difference in
+balanceOf before the transaction and after the transaction is
+764035550674393189.
+Recommendation
+Consider emitting the Transfer event with the same amount of tokens as the
+input amount or as the real balanceOf change.
+Fix 1.1
+The code of ERC20RebasableBridged was refactored to prevent the issue. The
+_unwrap function now calculates the number of shares from the token amount
+provided in the input and calls the newly introduced _unwrapShares function
+with the token and share amounts:
+Listing 2. Excerpt from ERC20RebasableBridged
+374 function _unwrap(address account_, uint256 tokenAmount_) internal
+  returns (uint256) {
+375 if (tokenAmount_ == 0) revert ErrorZeroTokensUnwrap();
+376 uint256 sharesAmount = _getSharesByTokens(tokenAmount_);
+377 return _unwrapShares(account_, sharesAmount, tokenAmount_);
+378 }
+The _unwrapShares function then burns the computed number of shares and
+emits the transfer events with the token and share amounts obtained from
+the _unwrap function:
+Listing 3. Excerpt from ERC20RebasableBridged
+380 function _unwrapShares(address account_, uint256 sharesAmount_, uint256
+  tokenAmount_) internal returns (uint256) {
+381 if (sharesAmount_ == 0) revert ErrorZeroSharesUnwrap();
+382 _burnShares(account_, sharesAmount_);
+383 _emitTransferEvents(account_, address(0), tokenAmount_,
+  sharesAmount_);
+384 TOKEN_TO_WRAP_FROM.safeTransfer(account_, sharesAmount_);
+385 return sharesAmount_;
+386 }
+This flow ensures that the token and share amounts are consistent in the
+events.
+===========================================================================
+W1: Usage of solc optimizer
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Compiler
+configuration
+Description
+The project uses solc optimizer. Enabling solc optimizer may lead to
+unexpected bugs.
+The Solidity compiler was audited in November 2018, and the audit concluded
+that the optimizer may not be safe.
+Exploit scenario
+A few months after deployment, a vulnerability is discovered in the optimizer.
+As a result, it is possible to attack the protocol.
+Recommendation
+Until the solc optimizer undergoes more stringent security analysis, opt-out
+using it. This will ensure the protocol is resilient to any existing bugs in the
+optimizer.
+Fix 1.1
+The issue was acknowledged with the comment:
+There are already proxies that were compiled and deployed with
+Solc.
+===========================================================================
+W2: ERC-20 transferFrom emits Approval
+Impact: Warning Likelihood: N/A
+Target: ERC20Core.sol,
+ERC20RebasableBridged.sol
+Type: Non-standard
+tokens
+Description
+Both implementations ERC20Core and ERC20RebasableBridged emit the Approval
+event when calling transferFrom. This is uncommon and may confuse off chain logic.
+Recommendation
+Consider not emitting the Approval event when calling transferFrom.
+Fix 1.1
+The issue was acknowledged with the comment:
+Core protocol also emits those events.
+===========================================================================
+W3: False comments
+Impact: Warning Likelihood: N/A
+Target: IL2ERC20Bridge.sol Type: Code quality
+Description
+The codebase contains the following false comments:
+Listing 4. Excerpt from IL2ERC20Bridge
+44 /// @param l1Gas_ Unused, but included for potential forward
+  compatibility considerations.
+Listing 5. Excerpt from IL2ERC20Bridge
+59 /// @param l1Gas_ Unused, but included for potential forward
+  compatibility considerations.
+The comments state that the l1Gas_ parameter is unused. However, it is used
+in the code.
+Recommendation
+Fix the false comments.
+Fix 1.1
+The comments were changed to reflect the valid use of the l1Gas_ parameter.
+===========================================================================
+W4: Limited ERC-2612 use-case with ERC-1271
+Impact: Warning Likelihood: N/A
+Target: PermitExtension.sol Type: ERC
+incompatibility
+Description
+The ERC-2612 permit signature is:
+function permit(address owner, address spender, uint value, uint deadline, uint8
+v, bytes32 r, bytes32 s) external;
+When owner is a contract, the r, s, v components are concatenated together
+and sent to the owner contract as the _signature parameter:
+function isValidSignature(bytes32 _hash, bytes memory _signature) public view
+returns (bytes4 magicValue);
+However, some ERC-1271 contracts may require more than 65 bytes to verify a
+signature.
+Recommendation
+There is an ongoing discussion about extending the permit ERC-2612 with
+additional function:
+function permit(address owner, address spender, uint value, uint deadline, bytes
+memory signature) external;
+Consider implementing this extension to allow arbitrary-length signatures.
+Fix 1.1
+In addition to the existing signature, a new permit() function was added to
+the PermitExtension contract:
+Listing 6. Excerpt from PermitExtension
+66 address owner_,
+67 address spender_,
+68 uint256 value_,
+69 uint256 deadline_,
+70 bytes calldata signature_
+71 ) external {
+72 _permit(owner_, spender_, value_, deadline_, signature_);
+73 }
+This additional function fixes the issue. However, the code now uses the
+isValidSignatureNow() function from OpenZeppelin contracts v4.6.0, which is
+known to be vulnerable to reverting for specific signers. The code is not
+affected by this vulnerability, since the logic is expected to revert if the
+signature is invalid, however, we still warn about this issue for potential future
+changes.
+===========================================================================
+W5: Use of a deprecated function
+Impact: Warning Likelihood: N/A
+Target: BridgingManager.sol Type: Deprecated
+function
+Description
+In the _initializeBridgingManager() function of the BridgingManager contract,
+the _setupRole() function from OpenZeppelin AccessControl contract is used
+to grant the admin role:
+Listing 7. Excerpt from BridgingManager
+43 _setupRole(DEFAULT_ADMIN_ROLE, admin_);
+However, the documentation for _setupRole() states that it "is deprecated in
+favor of _grantRole."
+Recommendation
+Use the _grantRole() function instead:
+_grantRole(DEFAULT_ADMIN_ROLE, admin_);
+Fix 1.1
+The _grantRole() function is now used instead of _setupRole().
+===========================================================================
+W6: Initializers can be front-run
+Impact: Warning Likelihood: N/A
+Target: TokenRateOracle.sol,
+L1LidoTokensBridge.sol,
+L2ERC20ExtendedTokensBrid
+ge.sol,
+ERC20BridgedPermit.sol,
+ERC20RebasableBridgedPermi
+t.sol
+Type: Upgradeability
+Description
+Bridges and tokens contracts are expected to be hidden behind proxies.
+Thus, the contract initialization process has three steps: contract
+deployment, a call to the initialize function through the proxy, and the
+change of the implementation address in the proxy contract. Without using a
+factory contract, these operations are not atomic, and there is a risk of the
+initialization front-running if the initializers are not properly protected. This is
+the case for the following contracts and their initializers:
+• TokenRateOracle: The malicious initialization of the oracle may lead to a
+wrong initial token rate set.
+• L1LidoTokensBridge: The front-run initialization may lead to granting the
+admin role to a malicious address.
+• L2ERC20ExtendedTokensBridge: The front-run initialization may lead to
+granting the admin role to a malicious address.
+• ERC20BridgedPermit: The front-run initialization may lead to setting
+incorrect token metadata.
+• ERC20RebasableBridgedPermit: The front-run initialization may lead to
+setting incorrect token metadata.
+Recommendation
+To prevent the front-running of the initialization transaction, consider the
+following measures:
+• Protect the initializer functions with a modifier that restricts access to
+them;
+• Ensure the upgrades are performed using the proxy__upgradeToAndCall()
+function on the proxy contract to ensure atomicity;
+• Make sure the deployment script detects failed initializations and
+redeploys the contracts.
+Fix 1.1
+The issue was acknowledged with the comment:
+The deployment with upgradeAndCall solves the problem.
+===========================================================================
+W7: Linear calculation of the allowed token rate
+deviation
+Impact: Warning Likelihood: N/A
+Target: TokenRateOracle.sol Type: Arithmetics
+Description
+In the TokenRateOracle contract, the new rate is accepted if it is in the
+allowed range. The range is computed as the deviation from the current rate,
+which is the allowed rate percentage change per day times the number of
+days passed since the last rate update, rounded up:
+Listing 8. Excerpt from TokenRateOracle
+149 uint256 rateL1TimestampDiff = newRateL1Timestamp_ -
+  _getRateL1Timestamp();
+150 uint256 roundedUpNumberOfDays = rateL1TimestampDiff /
+  ONE_DAY_SECONDS + 1;
+151 uint256 allowedTokenRateDeviation = roundedUpNumberOfDays *
+  MAX_ALLOWED_TOKEN_RATE_DEVIATION_PER_DAY;
+This approach, however, is an approximation of the correct compound
+percentage formula. If the rate changes, for example, by one percent per day
+for three days, the overall change will not be 3% but rather 1.01^3%, or
+~3.03%. The error highly depends on the magnitude of
+MAX_ALLOWED_TOKEN_RATE_DEVIATION_PER_DAY and the number of days passed
+since the last rate update. For larger values of
+MAX_ALLOWED_TOKEN_RATE_DEVIATION_PER_DAY and more days passed, the error
+will be more significant.
+Recommendation
+Consider using the correct compound percentage formula to calculate the
+allowed rate deviation or ensure that the error introduced by the current
+approach is acceptable.
+Fix 1.1
+The issue was acknowledged.
+===========================================================================
+W8: Insufficient data validation
+Impact: Warning Likelihood: N/A
+Target: **/* Type: Data validation
+Description
+Multiple contracts have insufficient data validation for parameters that are
+passing addresses in their constructors or initializers. The following contracts
+are affected by a lack of checks against the zero value:
+• CrossDomainEnabled: messenger_ in the constructor.
+• L1ERC20ExtendedTokensBridge: l2TokenBridge_ in the constructor.
+• L1LidoTokensBridge: admin_ in the initializer.
+• L2ERC20ExtendedTokensBridge: l1TokenBridge_ in the constructor and admin_
+in the initializer.
+• OpStackTokenRatePusher: wstEth_, tokenRateOracle_, and
+l2GasLimitForPushingTokenRate_ in the constructor.
+• RebasableAndNonRebasableTokens: l1TokenNonRebasable_, l1TokenRebasable_,
+l2TokenNonRebasable_, and l2TokenRebasable_ in the constructor.
+• TokenRateOracle: l2ERC20TokenBridge_, l1TokenRatePusher_,
+tokenRateOutdatedDelay_, maxAllowedL2ToL1ClockLag_,
+maxAllowedTokenRateDeviationPerDay_ in the constructor and tokenRate_
+and rateL1Timestamp_ in the initializer.
+• ERC20Bridged: bridge_ and decimals_ in the constructor.
+• ERC20Metadata: decimals_ in the constructor.
+• ERC20RebasableBridged: tokenToWrapFrom_, tokenRateOracle_ and
+l2ERC20TokenBridge_ in the constructor.
+Recommendation
+Add zero-value check for all mentioned parameters.
+Fix 1.1
+Missing checks listed above were added. The issue is fixed.
+===========================================================================
+I1: Uncached .length in for loop
+Impact: Info Likelihood: N/A
+Target: TokenRateNotifier.sol Type: Gas optimization
+Description
+In the following code snippets, .length of an array is used in a for loop
+without modifying the array:
+Listing 9. Excerpt from TokenRateNotifier
+97 for (uint256 obIndex = 0; obIndex < observers.length; obIndex++) {
+Listing 10. Excerpt from TokenRateNotifier
+124 for (uint256 obIndex = 0; obIndex < observers.length; obIndex++) {
+Recommendation
+Cache the length of the array to save gas.
+Fix 1.1
+The length is now cached before entering the loop.
+===========================================================================
+I2: Inconsistent modifiers order
+Impact: Info Likelihood: N/A
+Target: L1ERC20ExtendedTokensBrid
+ge.sol,
+L2ERC20ExtendedTokensBrid
+ge.sol
+Type: Code quality
+Description
+The finalizeERC20Withdrawal and finalizeDeposit functions are called on the
+destination chain of a cross-chain transfer to finalize the transfer.
+Listing 11. Excerpt from L1ERC20ExtendedTokensBridge
+98 function finalizeERC20Withdrawal(
+99 address l1Token_,
+100 address l2Token_,
+101 address from_,
+102 address to_,
+103 uint256 amount_,
+104 bytes calldata data_
+105 )
+106 external
+107 whenWithdrawalsEnabled
+108 onlyFromCrossDomainAccount(L2_TOKEN_BRIDGE)
+109 onlySupportedL1L2TokensPair(l1Token_, l2Token_)
+Listing 12. Excerpt from L2ERC20ExtendedTokensBridge
+113 function finalizeDeposit(
+114 address l1Token_,
+115 address l2Token_,
+116 address from_,
+117 address to_,
+118 uint256 amount_,
+119 bytes calldata data_
+120 )
+121 external
+122 whenDepositsEnabled()
+123 onlySupportedL1L2TokensPair(l1Token_, l2Token_)
+124 onlyFromCrossDomainAccount(L1_TOKEN_BRIDGE)
+Both functions apply the analogous modifiers for the same purpose, but the
+order of the modifiers is different.
+Recommendation
+Consider unifying the modifiers order to achieve the same behavior on both
+chains.
+Fix 1.1
+The issue was fixed by changing the order of the modifiers in the
+L2ERC20ExtendedTokensBridge contract.
+===========================================================================
+I3: Unused code
+Impact: Info Likelihood: N/A
+Target: **/* Type: Code quality
+Description
+The project contains multiple occurrences of unused code. See Appendix C
+for the full list.
+Recommendation
+Remove the unused code to improve the readability and maintainability of the
+codebase.
+Fix 1.1
+The unused errors and events were removed from the codebase.
+===========================================================================
+I4: Typos
+Impact: Info Likelihood: N/A
+Target: **/* Type: Code quality
+Description
+There are multiple typos in the codebase.
+Space before comma:
+Listing 13. Excerpt from ERC20RebasableBridged
+229 _emitTransferEvents(from_, to_, amount_ ,sharesToTransfer);
+Bad indentation:
+Listing 14. Excerpt from ERC20RebasableBridged
+365 function _wrap(address from_, address to_, uint256 sharesAmount_)
+  internal returns (uint256) {
+Typo:
+Listing 15. Excerpt from ERC20RebasableBridged
+412 error ErrorTrasferToRebasableContract();
+Recommendation
+Fix the typos.
+Fix 1.1
+All problems listed above were fixed.
+===========================================================================
+I5: _mintShares can return tokensAmount to save
+gas
+Impact: Info Likelihood: N/A
+Target: ERC20RebasableBridged Type: Gas optimization
+Description
+In the ERC20RebasableBridged contract, the _wrap function calls the _mintShares
+function, which calls _getTokensByShares to emit the event with the minted
+token amount. However, the _wrap function also returns the token amount
+calculated by the second call to _getTokensByShares. _getTokensByShares
+performs arithmetic calculations and performs two external calls to the
+oracle.
+Listing 16. Excerpt from ERC20RebasableBridged._mintShares
+303 function _mintShares(
+304 address recipient_,
+305 uint256 amount_
+306 ) internal onlyNonZeroAccount(recipient_) {
+307 _setTotalShares(_getTotalShares() + amount_);
+308 _getShares()[recipient_] = _getShares()[recipient_] + amount_;
+309 uint256 tokensAmount = _getTokensByShares(amount_);
+310 _emitTransferEvents(address(0), recipient_, tokensAmount ,amount_);
+311 }
+Listing 17. Excerpt from ERC20RebasableBridged._wrap
+365 function _wrap(address from_, address to_, uint256 sharesAmount_)
+  internal returns (uint256) {
+366 if (sharesAmount_ == 0) revert ErrorZeroSharesWrap();
+367 
+368 TOKEN_TO_WRAP_FROM.safeTransferFrom(from_, address(this),
+  sharesAmount_);
+369 _mintShares(to_, sharesAmount_);
+370 
+371 return _getTokensByShares(sharesAmount_);
+372 }
+The second call can be avoided if the _mintShares function returns the token
+amount to the _wrap function. This approach can save gas.
+Recommendation
+Consider changing the signature of the _mintShares function to return the
+token amount.
+Fix 1.1
+The issue was acknowledged with the comment:
+The function name won’t fit the return value.

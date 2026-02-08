@@ -1,0 +1,440 @@
+Repository URL:  https://github.com/rndlabs/composable-cow/commit/e53ffea
+Full commit hash: e53ffea
+========================================================================
+Findings Summary:
+==================
+M1: Oracle data validation
+Medium severity issue
+Impact: High Likelihood: Low
+Target: StopLoss.sol Type: Data validation
+Description
+The price from the oracle is not validated. This can cause incorrect prices and
+order executions.
+Listing 1. Excerpt from StopLoss.getTradeableOrder
+55 (, int256 latestSellPrice, , , ) =
+  data.sellTokenPriceOracle.latestRoundData();
+56 (, int256 latestBuyPrice, , , ) =
+  data.buyTokenPriceOracle.latestRoundData();
+Exploit scenario
+1. Bob sets the StopLoss order selling Token A and buying Token B. However
+the corresponding pairs in the oracle have different decimals. As a result,
+the order executes in different conditions.
+2. Bob sets the StopLoss order and due to stale/incorrect oracle prices the
+order executes in different conditions.
+Recommendation
+Add proper validation using retrieved values from the latestRoundData call.
+• Check decimals of the answers by using the decimals() function from the
+IAggregatorV3Interface interface. The answers have usually 8 or 18
+decimals and should be unified for the strike calculation.
+• Check positive price:
+require(answer > 0, "Negative returned price");
+• Check stale prices (if the round is not too old):
+require(updatedAt >= block.timestamp - HEARTBEAT_TIME , "Stale price
+feed"); ①
+① Where HEARTBEAT_TIME is a constant that is set to a maximum desired
+freshness (should be higher than the oracle heartbeat time).
+And if there is a possibility of using old version of OffchainAggregator called
+FluxAggregator, then also check the following parameters, since rounds can
+be calculated between more rounds.
+• Check stale price:
+require(answeredInRound >= roundId, "Price is stale");
+• Check incomplete round:
+require(updatedAt > 0, "Round is incomplete");
+Solution (Revision 1.1)
+The issue is partially fixed. The new code base contains proper checks for
+invalid and stale prices. However, the attempt to fix decimals introduced the
+critical severity issue C1: StopLoss arithmetic mismatches.
+Solution (Revision 1.2)
+Fixed, decimals are now normalized to 18.
+===========================================================================
+L1: Constructor data validation
+Low severity issue
+Impact: Low Likelihood: Low
+Target: ComposableCoW.sol,
+ERC1271Forwarder.sol,
+TWAP.sol
+Type: Data validation
+Description
+Contracts are missing zero-address validations in the constructor. Namely
+ComposableCoW, ERC1271Forwarder and TWAP.
+Listing 2. Excerpt from ComposableCoW.constructor
+64 constructor(address _settlement) {
+65 domainSeparator = CoWSettlement(_settlement).domainSeparator();
+66 }
+Listing 3. Excerpt from TWAP.constructor
+20 constructor(ComposableCoW _composableCow) {
+21 composableCow = _composableCow;
+22 }
+Listing 4. Excerpt from ERC1271Forwarder.constructor
+17 constructor(ComposableCoW _composableCoW) {
+18 composableCoW = _composableCoW;
+19 }
+Exploit scenario
+The contract is deployed with zero-address parameters and there is no way
+to set them later. Therefore the contract becomes unusable and needs to be
+re-deployed.
+Recommendation
+Add data validations to the constructors, e.g.:
+constructor(address _settlement) {
+  require(_settlement != address(0), "Zero-address _settlement");
+  domainSeparator = CoWSettlement(_settlement).domainSeparator();
+}
+Solution (Revision 1.1)
+Acknowledged. No zero-address checks have been introduced.
+Client’s response: "Given the importance of the constructor items, notably for
+order types that refer to critical state in the cabinet that may influence their
+logic, an additional step has been taken to make sure that all variables
+instantiated by a constructor are made public. This ensures that
+contracts/users interacting with these contracts can easily check all their
+assumptions."
+===========================================================================
+W1: GPv2Order data tampering
+Impact: Warning Likelihood: N/A
+Target: ComposableCow.sol,
+BaseConditionalOrder.sol
+Type: Payload
+manipulation
+Description
+In the BaseConditionalOrder contract, there is the verify function with the
+following parameters:
+Listing 5. Excerpt from BaseConditionalOrder.constructor
+18 function verify(
+19 address owner,
+20 address sender,
+21 bytes32 _hash,
+22 bytes32 domainSeparator,
+23 bytes32 ctx,
+24 bytes calldata staticInput,
+25 bytes calldata offchainInput,
+26 GPv2Order.Data calldata
+27 ) external view override {
+It is visible that GPv2Order data is omitted. For the hash verification is used:
+• the hash passed as a parameter in the isValidSafeSignature call,
+• the hash calculated with GPv2Order hash function based on the data from
+getTradeableOrder (that used static input from the passed payload).
+Therefore, GPv2Order data itself doesn’t figure in the verify function. The
+isValidSafeSignature is using it only for the _guardCheck call. And that means
+the GPv2Order data can be tampered with while it can affect the guard check
+but not the verify function result.
+Recommendation
+Ensure this behavior is not a problem or adjust the verification process to
+disallow any tampering with the GPv2Order data.
+Solution (Revision 1.1)
+The issue is invalidated by the following client’s response: "The data
+tempering that has been presented (from the context of calling directly to
+isValidSafeSignature) is known. The test case presented assumes calling
+directly, and not from the context of a Safe with ExtensibleFallbackHandler
+as the fallback handler with ComposableCoW set as a domainVerifier for the
+GPv2Settlement domain. The reason that the GPv2Order.Data isn’t verified
+subsequently is it has already been verified in the SignatureVerifierMuxer."
+===========================================================================
+W2: Revert conditions inconsistency
+Impact: Warning Likelihood: N/A
+Target: StopLoss.sol Type: Code maturity
+Description
+Most of the contracts use negations in revert conditions, e.g.:
+Listing 6. Excerpt from GoodAfterTime.getTradeableOrder
+60 if (!(data.sellToken.balanceOf(owner) >= data.minSellBalance)) {
+61 revert IConditionalOrder.OrderNotValid();
+62 }
+But in StopLoss contract, the condition is used without negation. This
+inconsistency decreases the readability of the code and can introduce
+potential human errors during future development.
+Listing 7. Excerpt from StopLoss.getTradeableOrder
+58 if (latestSellPrice/latestBuyPrice > data.strike) {
+59 revert IConditionalOrder.OrderNotValid();
+60 }
+Recommendation
+Unify revert conditions syntax across the whole project.
+if (!(latestSellPrice/latestBuyPrice <= data.strike)) {
+  revert IConditionalOrder.OrderNotValid();
+}
+Solution (Revision 1.1)
+Fixed. Client’s response: "Recommendation as per audit finding adopted
+uniformly across the project. Also searched in context of the ComposableCoW
+repository and found another instance in BaseConditionalOrder.sol that
+lacked this consistency around reversions."
+===========================================================================
+W3: Vulnerable MerkleProof library
+Impact: Warning Likelihood: N/A
+Target: ComposableCoW.sol Type: Dependencies
+Description
+The codebase is using OpenZeppelin MerkleProof library v4.8.0, which
+contains a vulnerability in multi-proofs. The contract is not exploitable since
+it is not using any multi-proofs but could be a potential problem in future
+development.
+Recommendation
+Update to v4.9.2 or higher where is this issue patched or stay on the current
+version if you are not going to use multi-proofs.
+Solution (Revision 1.1)
+Fixed. Client’s response: "Recommendation as per audit finding adopted.
+openzepplin library updated to v4.9.3."
+===========================================================================
+W4: GoodAfterTime order is missing the receiver
+address
+Impact: Warning Likelihood: N/A
+Target: GoodAfterTime.sol Type: Logic error
+Description
+The GoodAfterTime order is the only one whose data doesn’t contain the
+receiver address and there is passed a zero-address instead of it:
+Listing 8. Excerpt from GoodAfterTime.getTradeableOrder
+80 order = GPv2Order.Data(
+81 data.sellToken,
+82 data.buyToken,
+83 address(0),
+84 data.sellAmount,
+85 buyAmount,
+86 data.endTime.toUint32(),
+87 keccak256("GoodAfterTime"),
+88 0, // use zero fee for limit orders
+89 GPv2Order.KIND_SELL,
+90 data.allowPartialFill,
+91 GPv2Order.BALANCE_ERC20,
+92 GPv2Order.BALANCE_ERC20
+93 );
+L83: The receiver address
+This can result in loss of funds, which will happen if no other handling
+prevents this order from executing. However, the severity is set to the
+warning because there is on-chain handling that replaces the zero-address
+receiver by the owner in GPv2Settlement.
+Recommendation
+Include the receiver into the GoodAfterTime order data for consistency.
+Solution (Revision 1.1)
+Fixed. Client’s response: "To ensure consistency, receiver is now specified in
+the Data struct to avoid use of address(0) and maintain maximum flexibility
+for the order type."
+===========================================================================
+I1: Unnecessary SafeMath
+Impact: Info Likelihood: N/A
+Target: PerpetualStableSwap.sol Type: Best practices
+Description
+PerpetualStableSwap uses SafeMath for uint256 and uint8 even with Solidity
+>=0.8.0 <0.9.0. This is not necessary, since the >=0.8 contains implicit
+overflow/underflow handling. All the other contracts use native Solidity math
+operators, which is inconsistent.
+Listing 9. Excerpt from PerpetualStableSwap.
+13 using SafeMath for uint256;
+14 using SafeMath for uint8;
+Recommendation
+Unify the mathematical syntax and replace SafeMath calls with standard math
+operators.
+Solution (Revision 1.1)
+Fixed, SafeMath is removed.
+===========================================================================
+I2: Missing cabinet cleanup
+Impact: Info Likelihood: N/A
+Target: ComposableCoW.sol Type: Best practices
+Description
+The function remove in the ComposableCoW contract removes the order flag from
+the singleOrders mapping but keeps data in the cabinet mapping. This causes
+data leftovers in the storage.
+Listing 10. Excerpt from ComposableCoW.remove
+142 function remove(bytes32 singleOrderHash) external {
+143 singleOrders[msg.sender][singleOrderHash] = false;
+144 }
+Recommendation
+Add a data removal also for the cabinet to keep storage as clean as possible.
+function remove(bytes32 singleOrderHash) external {
+  singleOrders[msg.sender][singleOrderHash] = false;
+  cabinet[msg.sender][singleOrderHash] = bytes32(0);
+}
+Solution (Revision 1.1)
+Fixed, cabinet cleanup is added to the remove function.
+===========================================================================
+I3: Errors in the documentation
+Impact: Info Likelihood: N/A
+Target: GoodAfterTime.sol,
+MarshalLib.sol,
+SignatureVerifierMuxer.sol
+Type: Documentation
+Description
+This informational issue summarizes inconsistencies and typos in the
+documentation or comments.
+In the GoodAfterTime contract, there should be buyAmount instead of
+sellAmount.
+Listing 11. Excerpt from GoodAfterTime.getTradeableOrder
+74 // Don't allow the order to be placed if the sellAmount is
+  less than the minimum out.
+75 if (!(buyAmount >= (_expectedOut * (MAX_BPS -
+  p.allowedSlippage)) / MAX_BPS)) {
+76 revert IConditionalOrder.OrderNotValid();
+77 }
+In the MarshalLib library, in decode and decodeWithSelector functions should be
+"is 0x00" instead of "is not 0x00".
+Listing 12. Excerpt from MarshalLib.decode
+29 // set isStatic to true if the left-most byte of the data is
+  not 0x00
+30 isStatic := iszero(shr(248, data))
+Listing 13. Excerpt from MarshalLib.decodeWithSelector
+38 // set isStatic to true if the left-most byte of the data is
+  not 0x00
+39 isStatic := iszero(shr(248, data))
+Typo in SignatureVerifierMuxer documentation - "arbitray" instead of
+"arbitrary".
+Listing 14. Excerpt from SignatureVerifierMuxer.
+38 ) external view returns (bytes4 magic);
+39 }
+Recommendation
+Fix these errors and double-check the rest of the project documentation for
+potential other issues to ensure 100% documentation consistency.
+Solution (Revision 1.1)
+Fixed.
+===========================================================================
+I4: TradeAboveThreshold order receiver naming
+Impact: Info Likelihood: N/A
+Target: TradeAboveThreshold.sol Type: Code maturity
+Description
+The TradeAboveThreshold order has confusing receiver naming, called target. It
+is inconsistent and with the inline documentation can be misleading about its
+purpose.
+Listing 15. Excerpt from TradeAboveThreshold.
+ 8 // @title A smart contract that trades whenever its balance of a certain
+  token exceeds a target threshold
+ 9 contract TradeAboveThreshold is BaseConditionalOrder {
+10 using GPv2Order for GPv2Order.Data;
+11 
+12 struct Data {
+13 IERC20 sellToken;
+14 IERC20 buyToken;
+15 address target;
+16 uint256 threshold;
+17 }
+Recommendation
+Rename it to receiver as it is for different orders.
+Solution (Revision 1.1)
+Fixed.
+===========================================================================
+I5: Inconsistent error
+Impact: Info Likelihood: N/A
+Target: TradeAboveThreshold.sol Type: Code maturity
+Description
+The TradeAboveThreshold order is the only order that uses a different error
+message for wrong conditions.
+Listing 16. Excerpt from TradeAboveThreshold.getTradeableOrder
+31 require(balance >= data.threshold, "Not enough balance");
+Recommendation
+Replace it with the custom error that is used across all other orders.
+if (!(balance >= data.threshold)) {
+  revert IConditionalOrder.OrderNotValid();
+}
+Solution (Revision 1.1)
+Fixed.
+===========================================================================
+I6: Commented-out code
+Impact: Info Likelihood: N/A
+Target: PerpetualStableSwap.sol Type: Code maturity
+Description
+There is a commented-out code in the PerpetualStableSwap contract.
+Listing 17. Excerpt from PerpetualStableSwap.getTradeableOrder
+54 // (IERC20 sellToken, IERC20 buyToken, uint256 sellAmount,
+  uint256 buyAmount) = side(owner, data);
+Recommendation
+Dead and commented-out code should not be in the production-ready
+codebase.
+Solution (Revision 1.1)
+Fixed. Client’s comment: "Some comment blocks as well found that were
+inconsistent with project-wide styling that were fixed."
+===========================================================================
+I7: Inconsistent naming
+Impact: Info Likelihood: N/A
+Target: Base.sol Type: Code maturity
+Description
+The file Base.sol contains the contract named ExtensibleBase, which is
+confusing a decreases the code clarity.
+Recommendation
+Rename the file to ExtensibleBase.sol.
+C1: StopLoss arithmetic mismatches
+Critical severity issue
+Impact: High Likelihood: High
+Target: StopLoss.sol Type: Arithmetic
+Description
+The StopLoss contract includes various arithmetic errors in the following code.
+Listing 18. Excerpt from StopLoss.getTradeableOrder
+91 // Normalize the basePrice and quotePrice.
+92 basePrice = scalePrice(basePrice, oracleSellTokenDecimals,
+  erc20SellTokenDecimals);
+93 quotePrice = scalePrice(quotePrice, oracleBuyTokenDecimals,
+  erc20BuyTokenDecimals);
+94 
+95 if (!(basePrice / quotePrice <= data.strike)) {
+96 revert
+  IConditionalOrder.OrderNotValid(STRIKE_NOT_REACHED);
+97 }
+The scalePrice function is used to convert oracle prices' decimals to token
+decimals, which is a fatal mistake.
+Listing 19. Excerpt from StopLoss.scalePrice
+122 function scalePrice(int256 oraclePrice, uint8 oracleDecimals, uint8
+  erc20Decimals) internal pure returns (int256) {
+123 if (oracleDecimals < erc20Decimals) {
+124 return oraclePrice * int256(10 ** uint256(erc20Decimals -
+  oracleDecimals));
+125 } else if (oracleDecimals > erc20Decimals) {
+126 return oraclePrice / int256(10 ** uint256(oracleDecimals -
+  erc20Decimals));
+127 }
+40 of 49
+128 return oraclePrice;
+129 }
+Exploit scenario
+We identified 3 different possible scenarios which can happen due to bad
+arithmetics. All of them have a high impact and violate the expected system
+behavior.
+Unrealized stop-loss order
+This scenario has been introduced due to the new scalePrice function (see
+Listing 19) which normalizes prices from oracles to custom decimals. However,
+token decimals are used for this normalization. It causes miscalculations
+when sellToken and buyToken have different decimals, and can lead to
+unrealized users' stop-loss orders. Further explanation is in the following
+example.
+Assumptions:
+• Both oracle prices have 18 decimals,
+• sellToken has 6 decimals,
+• buyToken has 4 decimals,
+• sellToken price (basePrice) = 1000e18,
+• buyToken price (quotePrice) = 10e18.
+Scenario:
+1. Alice wants to set the stop-loss order to basePrice = 900e18, therefore
+data.strike has to be set to 90.
+2. Price of the sellToken decreases to 900e18 and Alice expects the order to
+be fulfilled. But there is a problem due to the incorrect normalization of
+41 of 49
+decimals.
+3. sellToken has 6 decimals, therefore the basePrice gets scaled to 900e6.
+4. buyToken has 4 decimals, therefore the quotePrice gets scaled to 10e4.
+5. These numbers go into the revert condition (see L95 in Listing 18).
+6. The left side of the equation is 9000 and the right side is 90.
+7. Therefore the transaction reverts and the stop-loss does not get realized
+at the intended price and not even at much lower prices.
+Precision loss
+The second exploit scenario is caused by precision loss during the division
+operation in the revert condition (see L95 in Listing 18).
+Assumptions:
+• Oracle prices, sellToken and buyToken all have 18 decimals.
+• basePrice= 3000e18
+• quotePrice = 1000e18
+Scenario:
+1. Alice sets stop-loss order to basePrice = 2000e18, which means
+data.strike = 2.
+2. basePrice decreases from 3000e18 to 2900e18.
+3. Division in the revert condition (see L95 in Listing 18) causes rounding and
+2900e18/1000e18 = 2 instead of precise 2,9.
+4. The revert condition is not met and the sell order is created at a much
+higher price than intended.
+Tokens with similar exchange rates
+The current design disallows stop-loss order to be used for tokens with
+similar exchange rates.
+Assumptions: * Oracle prices, sellToken and buyToken all have 18 decimals. *
+basePrice= 1100e18 * quotePrice = 1000e18
+Scenario: 1. Alice wants to set the stop-loss order to basePrice = 900e18,
+which means data.strike = 0,9. 2. The system does not allow to input decimal
+numbers as data.strike.
+Recommendation
+• Normalize the prices to 18 decimals to mitigate any decimals mismatch and
+improve the code clarity.
+basePrice = scalePrice(basePrice, oracleSellTokenDecimals, 18);
+quotePrice = scalePrice(quotePrice, oracleBuyTokenDecimals, 18);
+• Denominate the data.strike also in 18 decimals to allow precise
+data.strike user input in case of similar token prices
+• Upscale the left side of the condition also by 18 decimals.
+if (!((basePrice * (10 ** 18)) / quotePrice <= data.strike)) {
+  revert IConditionalOrder.OrderNotValid(STRIKE_NOT_REACHED);

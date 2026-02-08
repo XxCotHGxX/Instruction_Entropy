@@ -1,0 +1,905 @@
+Repository URL: https://github.com/rhinestone-labs/safe-7579/commit/d961421  
+Full commit hash: d961421641b826f6c970e13b0af18111ec10ebad
+========================================================================
+Findings Summary:
+==================
+C1: ERC-4337 counterfactual address can be
+stolen
+Critical severity issue
+Impact: High Likelihood: High
+Target: Safe7579Launchpad.sol Type: Front-running,
+Double
+initialization
+Description
+ERC-4337 allows a smart wallet to be created as a part of the first userOp
+execution on the wallet. For this purpose, the Safe7579Launchpad contract is
+used, as it serves as the smart wallet initial implementation contract. The full
+execution flow is as follows:
+1. A user builds a userOp creating a new Safe account with ERC-7579 enabled
+features and broadcasts it to bundlers.
+2. A bundler collects the userOp and executes it later on the ERC-4337 entry
+point.
+3. The entry point calls SenderCreator (a helper contract) to deploy a new
+smart wallet.
+4. SenderCreator calls SafeProxyFactory which creates a new Safe proxy and
+sets the singleton (contract implementation address) to the address of
+Safe7579Launchpad.
+5. SafeProxyFactory also calls Safe7579Launchpad.preValidationSetup on the
+just created Safe proxy, storing the initialization data hash and
+performing an optional delegatecall.
+6. The entry point execution continues as with any other userOp, calling
+validateUserOp on the Safe proxy.
+7. This involves checking the initialization data hash stored in the userOp
+against the one stored in the Safe proxy, setting up ERC-7579 validators
+and using one of them to validate the userOp.
+8. Bootstrapping of the smart wallet finishes with the call to
+Safe7579Launchpad.setupSafe, changing the singleton address to the Safe
+singleton (implementation) contract and configuring Safe owners and
+threshold from the initialization data.
+However, due to a missing check for double initialization in
+Safe7579Launchpad.preValidationSetup, it is possible to bypass the standard
+execution flow and take full control of the address of the smart wallet
+created in step 4.
+Listing 1. Excerpt from Safe7579Launchpad
+120 function preValidationSetup(
+121 bytes32 initHash,
+122 address to,
+123 bytes calldata preInit
+124 )
+125 external
+126 onlyProxy
+127 {
+128 // sstore inithash
+129 _setInitHash(initHash);
+130 
+131 // if a delegatecall target is provided, SafeProxy will execute a
+  delegatecall
+132 if (to != address(0)) {
+133 (bool success,) = to.delegatecall(preInit);
+134 if (!success) revert PreValidationSetupFailed();
+135 }
+136 }
+
+Recommendation
+Add the following check to Safe7579Launchpad.preValidationSetup to prevent
+double initialization:
+require(_initHash() == bytes32(0), "Safe7579Launchpad: already initialized");
+Fix 1.1
+Fixed by implementing the recommendation:
+if (getInitHash() != bytes32(0)) revert Safe7579LaunchpadAlreadyInitialized();
+===========================================================================
+H1: initializeAccount vulnerable to front-running
+High severity issue
+Impact: High Likelihood: Medium
+Target: Safe7579.sol,
+Safe7579Launchpad.sol
+Type: Front-running
+Description
+The execution flow enabling ERC-7579 features on existing Safe accounts
+involves:
+• enabling the Safe7579 contract as a Safe module,
+• setting the Safe7579 contract as the fallback handler on the Safe,
+• calling Safe7579.initializeAccount through the configured fallback
+handler.
+The first two steps may be performed in the reversed order. However, to
+prevent the Safe account from being stolen, it is important to set the fallback
+handler and call the initializeAccount function in the same transaction.
+
+Recommendation
+Create a helper launchpad function that performs all three steps in a single
+transaction. Document the importance of performing all three steps in a
+single transaction and guide users to use the launchpad function.
+Fix 1.1
+The finding was fixed by adding the onlyEntryPointOrSelf modifier to the
+initializeAccount function as well as the launchpadValidators function, which
+may also be abused for front-running.
+===========================================================================
+H2: Executors cannot be used
+High severity issue
+Impact: High Likelihood: Medium
+Target: Safe7579.sol Type: Bad
+implementation
+Description
+The function Safe7579.executeFromExecutor allows ERC-7579 executor
+modules to execute operations on behalf of Safe smart accounts.
+Listing 2. Excerpt from Safe7579
+151 function executeFromExecutor(
+152 ModeCode mode,
+153 bytes calldata executionCalldata
+154 )
+155 external
+156 payable
+157 override
+158 onlyExecutorModule
+159 withHook(IERC7579Account.executeFromExecutor.selector)
+160 withRegistry(msg.sender, MODULE_TYPE_EXECUTOR)
+161 returns (bytes[] memory returnDatas)
+The withRegistry modifier should check that the sender module is attested as
+an executor module by trusted attesters with a given threshold. However, the
+execution always fails because the check is performed for the address of the
+Safe smart account (the address of SafeProxy) and not the address of the
+executor module.
+
+Recommendation
+Replace msg.sender with _msgSender() in the withRegistry modifier to check
+the executor module address and allow executor modules to be used.
+Fix 1.1
+The finding was fixed by replacing msg.sender with _msgSender() in the
+withRegistry modifier.
+===========================================================================
+M1: Missing event and onInstall call in
+_initModules
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: Initializer.sol Type: Bad
+implementation
+Description
+Modules installed via the _initModules function do not invoke the module’s
+onInstall function and do not emit an event. This issue regards all module
+types and their respective install functions:
+• _installValidator
+• _installExecutor
+• _installFallbackHandler
+• _installHook
+
+Recommendation
+The _install… functions return moduleInitData bytes, intended for module
+initialization upon installation. Fix the code by passing this data to
+ModuleInstallUtil.installModule, which calls the module’s onInstall function
+and emits the required event.
+Fix 1.1
+The finding was fixed by catching the moduleInitData bytes and passing them
+to ModuleInstallUtil.installModule.
+===========================================================================
+M2: BatchedExecUtil._tryExecute inverted success
+Medium severity issue
+Impact: Low Likelihood: High
+Target: DCUtil.sol Type: Logic bug
+Description
+The function BatchedExecUtil._tryExecute returns success = true if the call
+opcode reverts (returns 0) and false if it succeeds.
+The inverted success result is not used in the current state and therefore
+does not cause unexpected behavior like reverts or wrong events emitting.
+However, it is a major bug in the logic and should be fixed.
+Listing 3. Excerpt from BatchedExecUtil
+118 success := iszero(call(gas(), target, value, result,
+  callData.length, codesize(), 0x00))
+
+Recommendation
+Remove the iszero opcode from the success value assignment in the
+BatchedExecUtil._tryExecute function.
+success := call(gas(), target, value, result, callData.length, codesize(), 0x00)
+Fix 1.1
+Fixed, the iszero opcode was removed.
+===========================================================================
+M3: BatchedExecUtil.tryExecute single return
+value
+Medium severity issue
+Impact: Low Likelihood: High
+Target: DCUtil.sol Type: Bad
+implementation
+Description
+The function BatchedExecUtil.tryExecute returns only the result of the last
+execution in the batch. In combination with the previous issue, the actual
+result is even inverted.
+Listing 4. Excerpt from BatchedExecUtil
+35 function tryExecute(Execution[] calldata executions) external returns
+  (bool success) {
+36 uint256 length = executions.length;
+37 
+38 for (uint256 i; i < length; i++) {
+39 Execution calldata _exec = executions[i];
+40 (success,) = _tryExecute(_exec.target, _exec.value,
+  _exec.callData);
+41 }
+42 }
+
+Recommendation
+Use bool[] as the return type for the correct and exact batch execution
+results.
+function tryExecute(Execution[] calldata executions) external returns (bool[]
+memory result) {
+  uint256 length = executions.length;
+  result = new bool[](length);
+  for (uint256 i; i < length; i++) {
+  Execution calldata _exec = executions[i];
+  (bool success,) = _tryExecute(_exec.target, _exec.value,
+_exec.callData);
+  result[i] = success;
+  }
+}
+Fix 1.1
+Fixed, the return value was removed from the tryExecute function.
+===========================================================================
+M4: ModuleManager._installHook SIG hook
+overwriting
+Medium severity issue
+Impact: Medium Likelihood: Medium
+Target: ModuleManager.sol Type: Bad
+implementation
+Description
+The ModuleManager._installHook function allows overwriting SIG hooks
+although it is unwanted behavior. The currentHook local variable is not
+assigned before the revert condition currentHook != address(0); therefore,
+the function does not revert even if the SIG hook is already installed, resulting
+in the SIG hook being overwritten.
+Listing 5. Excerpt from ModuleManager
+412 } else if (hookType == HookType.SIG) {
+413 // Dont allow hooks to be overwritten. If a hook is currently
+  installed, it must be
+414 // uninstalled first
+415 if (currentHook != address(0)) {
+416 revert HookAlreadyInstalled(currentHook);
+417 }
+418 currentHook = $hookManager[msg.sender][selector];
+419 $hookManager[msg.sender][selector] = hook;
+
+Recommendation
+Move the assignment of the currentHook local variable above the revert
+condition.
+currentHook = $hookManager[msg.sender][selector];
+if (currentHook != address(0)) {
+revert HookAlreadyInstalled(currentHook);
+}
+Fix 1.1
+Fixed, the currentHook assignment was moved according to the
+recommendation.
+===========================================================================
+M5: Locked Ether
+Medium severity issue
+Impact: High Likelihood: Low
+Target: Safe7579.sol, Initializer.sol,
+ModuleManager.sol,
+Safe7579Launchpad.sol
+Type: Loss of funds
+Description
+The contract Safe7579 and parent contracts Initializer and ModuleManager
+can receive Ether but never send it. According to developers, the payable
+modifiers on functions are used to be gas optimization.
+List of payable functions: * Safe7579 - execute, executeFromExecutor,
+installModule, uninstallModule, validateUserOp * Initializer -
+launchpadValidators, initializeAccount * ModuleManager - fallback *
+Safe7579Launchpad - receive
+
+Recommendation
+Remove the payable modifier where is not necessary.
+Decorate the receive function in the Safe7579Launchpad contract with the
+onlyProxy modifier to prevent locked Ether on the launchpad implementation
+contract.
+Fix 1.1
+Fixed. The payable modifier was removed from functions. However, the
+ModuleManager.fallback remains payable.
+Cheaper on gas. the fallback in safe accounts does not forward
+msg.value so nothing should be able to get stuck here.
+— Rhinestone
+The onlyProxy modifier was added to the Safe7579Launchpad.receive function.
+===========================================================================
+L1: Fallback handler CallType validation
+Low severity issue
+Impact: Low Likelihood: Medium
+Target: ModuleManager.sol Type: Data validation
+Description
+EIP-7579's fallback handlers that can be installed through the Safe7579
+module only support a subset of all possible call types (static call, single call,
+batch call, etc).
+However, the ModuleManager contract responsible for registering new fallback
+handlers and for dispatching to fallback handlers does not perform any data
+validation for the supported call types when installing a new fallback handler.
+Listing 6. Excerpt from ModuleManager._installFallbackHandler
+202 (bytes4 functionSig, CallType calltype, bytes memory initData) =
+203 abi.decode(params, (bytes4, CallType, bytes));
+204 
+205 // disallow calls to onInstall or onUninstall.
+206 // this could create a security issue
+207 if (
+208 functionSig == IModule.onInstall.selector || functionSig ==
+  IModule.onUninstall.selector
+209 ) revert InvalidFallbackHandler(functionSig);
+210 if (_isFallbackHandlerInstalled(functionSig)) revert
+  FallbackInstalled(functionSig);
+211 
+212 FallbackHandler storage $fallbacks = $fallbackStorage[
+  msg.sender][functionSig];
+213 $fallbacks.calltype = calltype;
+When dispatching to a given fallback handler, no data validation is performed
+either, ignoring unsupported call types.
+41 of 86
+Listing 7. Excerpt from ModuleManager._callFallbackHandler
+290 if (calltype == CALLTYPE_STATIC) {
+291 return _staticcallReturn({
+292 safe: ISafe(msg.sender),
+293 target: handler,
+294 callData: abi.encodePacked(callData, _msgSender()) // append
+  ERC2771
+295 });
+296 }
+297 if (calltype == CALLTYPE_SINGLE) {
+298 return _execReturn({
+299 safe: ISafe(msg.sender),
+300 target: handler,
+301 value: 0,
+302 callData: abi.encodePacked(callData, _msgSender()) // append
+  ERC2771
+303 });
+304 }
+Ignoring unsupported call types may be confusing to users and lead to
+unexpected behavior.
+
+Recommendation
+When installing a new fallback handler, check for the supported call types
+and revert the transaction if an unsupported call type is provided.
+Fix 1.1
+Fixed by adding the following if condition to the _installFallbackHandler
+function:
+  // disallow unsupported calltypes
+  if (calltype != CALLTYPE_SINGLE && calltype != CALLTYPE_STATIC) {
+  revert InvalidCallType(calltype);
+  }
+===========================================================================
+L2: Domain-specific message encoding missing
+with signedMessages
+Low severity issue
+Impact: Medium Likelihood: Low
+Target: Safe7579.sol Type: Signature
+schemes
+Description
+The function Safe7579.isValidSignature is responsible for approving arbitrary
+operations using the EIP-1271 standard.
+The implementation handles multiple different scenarios:
+• a hash is already approved in the signedMessages mapping in Safe,
+• a hash is signed with Safe owners,
+• a hash needs to be verified using one of the installed validator modules.
+However, the first scenario is implemented differently from the
+implementation in Safe’s CompatibilityFallbackHandler contract.
+In the Safe7579 contract, the hash is directly checked against signedMessages.
+Listing 8. Excerpt from Safe7579
+328 function isValidSignature(
+329 bytes32 hash,
+330 bytes calldata data
+331 )
+332 external
+333 view
+334 returns (bytes4 magicValue)
+335 {
+336 ISafe safe = ISafe(msg.sender);
+44 of 86
+337 
+338 // check for safe's approved hashes
+339 if (data.length == 0 && safe.signedMessages(hash) != 0) {
+340 // return magic value
+341 return IERC1271.isValidSignature.selector;
+342 }
+The implementation in the CompatibilityFallbackHandler contract first
+encodes the hash into bytes, prepares EIP-712 messageData, and then checks
+the hash against the signedMessages mapping.
+  function isValidSignature(bytes32 _dataHash, bytes calldata _signature)
+external view returns (bytes4) {
+  ISignatureValidator validator = ISignatureValidator(msg.sender);
+  bytes4 value = validator.isValidSignature(abi.encode(_dataHash),
+_signature);
+  return (value == EIP1271_MAGIC_VALUE) ? UPDATED_MAGIC_VALUE : bytes4(0);
+  }
+  function isValidSignature(bytes memory _data, bytes memory _signature)
+public view override returns (bytes4) {
+  // Caller should be a Safe
+  Safe safe = Safe(payable(msg.sender));
+  bytes memory messageData = encodeMessageDataForSafe(safe, _data);
+  bytes32 messageHash = keccak256(messageData);
+  if (_signature.length == 0) {
+  require(safe.signedMessages(messageHash) != 0, "Hash not approved");
+  } else {
+  safe.checkSignatures(messageHash, messageData, _signature);
+  }
+  return EIP1271_MAGIC_VALUE;
+  }
+The implementation in the CompatibilityFallbackHandler works in conjunction
+with the SignMessageLib helper contract:
+  function signMessage(bytes calldata _data) external {
+  bytes32 msgHash = getMessageHash(_data);
+  signedMessages[msgHash] = 1;
+  emit SignMsg(msgHash);
+45 of 86
+  }
+  function getMessageHash(bytes memory message) public view returns (bytes32)
+{
+  bytes32 safeMessageHash = keccak256(abi.encode(SAFE_MSG_TYPEHASH,
+keccak256(message)));
+  return keccak256(abi.encodePacked(bytes1(0x19), bytes1(0x01),
+Safe(payable(address(this))).domainSeparator(), safeMessageHash));
+  }
+The approach in Safe7579 does not guarantee that signedMessages will be
+called with the same pre-image data that was signed by the Safe owners.
+
+Recommendation
+Use the same approach as in the CompatibilityFallbackHandler contract to
+achieve consistency and prevent attacks originating from the message
+encoding missing in the Safe7579 contract.
+Fix 1.1
+The following code fixing the issue was added to the respective if block:
+  if (data.length == 0) {
+  bytes32 messageHash = keccak256(
+  EIP712.encodeMessageData(
+  safe.domainSeparator(),
+  SAFE_MSG_TYPEHASH,
+  abi.encode(keccak256(abi.encode(hash)))
+  )
+  );
+  require(safe.signedMessages(messageHash) != 0, "Hash not approved");
+  // return magic value
+  return IERC1271.isValidSignature.selector;
+  }
+===========================================================================
+L3: ERC-4337 factory standard violation
+Low severity issue
+Impact: Low Likelihood: Medium
+Target: SafeProxyFactory.sol Type: ERC violation
+Description
+The flow when a new Safe with ERC-7579 enabled features is created through
+the Safe7579Launchpad contract expects Safe’s SafeProxyFactory to be used as
+the ERC-4337 factory.
+ERC-4337 defines the following assumption on the behavior of the factory:
+If the factory does use CREATE2 or some other deterministic
+method to create the wallet, it’s expected to return the wallet
+address even if the wallet has already been created. This is to
+make it easier for clients to query the address without knowing
+if the wallet has already been deployed, by simulating a call to
+entryPoint.getSenderAddress(), which calls the factory under the
+hood.
+However, the function SafeProxyFactory.createProxyWithNonce used to create
+the smart is implemented as follows:
+  function createProxyWithNonce(address _singleton, bytes memory initializer,
+uint256 saltNonce) public returns (SafeProxy proxy) {
+  // If the initializer changes the proxy address should change too.
+Hashing the initializer data is cheaper than just concatinating it
+  bytes32 salt = keccak256(abi.encodePacked(keccak256(initializer),
+saltNonce));
+  proxy = deployProxy(_singleton, initializer, salt);
+  emit ProxyCreation(proxy, _singleton);
+  }
+  function deployProxy(address _singleton, bytes memory initializer, bytes32
+salt) internal returns (SafeProxy proxy) {
+  require(isContract(_singleton), "Singleton contract not deployed");
+  bytes memory deploymentData =
+abi.encodePacked(type(SafeProxy).creationCode, uint256(uint160(_singleton)));
+  assembly {
+  proxy := create2(0x0, add(0x20, deploymentData),
+mload(deploymentData), salt)
+  }
+  require(address(proxy) != address(0), "Create2 call failed");
+  // rest of the implementation omitted
+  }
+This violates the standard because the function createProxyWithNonce reverts
+if the proxy has already been created at the given address.
+
+Recommendation
+Create a wrapper that calls the createProxyWithNonce function and catches
+the revert, returning the proxy address if the proxy has already been created.
+Solution 1.1
+The Rhinestone team acknowledged the finding. Safe currently uses the
+same approach, and bundlers currently do not rely on the behavior described
+in the ERC-4337 standard. Rhinestone is aware it may be necessary to change
+the factory’s behavior in the future to comply with the standard.
+===========================================================================
+L4: _multiTypeInstall module type validation
+Low severity issue
+Impact: Low Likelihood: Low
+Target: ModuleManager.sol Type: Data validation
+Description
+The function ModuleManager._multiTypeInstall is a helper to install an ERC-
+7579 module as different module types at once while calling the function
+onInstall only once. The implementation decodes module types and the
+respective initialization data from a bytes payload and install the module with
+respect to the decoded types.
+Listing 9. Excerpt from ModuleManager._multiTypeInstall
+531 for (uint256 i; i < length; i++) {
+532 uint256 _type = types[i];
+533 
+534 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+535 /* INSTALL VALIDATORS */
+536 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+537 if (_type == MODULE_TYPE_VALIDATOR) {
+538 _installValidator(module, contexts[i]);
+539 }
+540 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+541 /* INSTALL EXECUTORS */
+542 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+543 else if (_type == MODULE_TYPE_EXECUTOR) {
+544 _installExecutor(module, contexts[i]);
+545 }
+546 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+547 /* INSTALL FALLBACK */
+548 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+549 else if (_type == MODULE_TYPE_FALLBACK) {
+550 _installFallbackHandler(module, contexts[i]);
+551 }
+552 /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+51 of 86
+553 /* INSTALL HOOK (global or sig specific) */
+554 /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+555 else if (_type == MODULE_TYPE_HOOK) {
+556 _installHook(module, contexts[i]);
+557 }
+558 }
+However, there is no else branch handling the case when a decoded module
+type does not match one of the expected values.
+
+Recommendation
+Revert the execution if one of the decoded module types in
+_multiTypeInstall does not match one of the expected values.
+Fix 1.1
+Fixed by adding an else branch reverting the execution.
+===========================================================================
+W1: postCheck function is different from the EIP-
+7579 interface
+Impact: Warning Likelihood: N/A
+Target: IERC7579Module.sol Type: Bad
+implementation
+Description
+The postCheck function differs from the IHook interface specified in EIP-7579.
+The EIP-7579’s IHook interface specifies the function as follows.
+interface IHook is IModule {
+  function preCheck(
+  address msgSender,
+  uint256 value,
+  bytes calldata msgData
+  )
+  external
+  returns (bytes memory hookData);
+  function postCheck(
+  bytes calldata hookData,
+  bool executionSuccess,
+  bytes calldata executionReturn
+  ) external;
+}
+In the codebase, the function is missing the second and third parameters.
+Listing 10. Excerpt from IHook
+84 interface IHook is IModule {
+85 function preCheck(
+86 address msgSender,
+87 uint256 msgValue,
+53 of 86
+88 bytes calldata msgData
+89 )
+90 external
+91 returns (bytes memory hookData);
+92 
+93 function postCheck(bytes calldata hookData) external;
+94 }
+Recommendation
+Ensure the postCheck function is consistent with the EIP-7579 specification.
+Unify the function signatures across both the interface and implementation
+to maintain compliance.
+Fix 1.1
+The EIP-7579 specification was fixed to match the implementation.
+===========================================================================
+W2: uninstallModule reverts on multi-type module
+Impact: Warning Likelihood: N/A
+Target: Safe7579.sol Type: User experience
+Description
+The installModule function supports installing multi-type modules, whereas
+the uninstallModule function does not and reverts when passed such a
+module (specifically, when moduleType == MULTITYPE_MODULE). Although such a
+module can still be uninstalled by calling the uninstallModule function
+separately for each type the module represents, this behavior could confuse
+users and module developers.
+Listing 11. Excerpt from Safe7579
+413 function uninstallModule(
+414 uint256 moduleType,
+415 address module,
+416 bytes calldata deInitData
+417 )
+418 external
+419 payable
+420 override
+421 withHook(IERC7579Account.uninstallModule.selector)
+422 onlyEntryPointOrSelf
+423 {
+424 // internal uninstall functions will decode the deInitData param,
+  and return sanitzied
+425 // moduleDeInitData. This is the initData that will be passed to
+  Module.onUninstall()
+426 bytes memory moduleDeInitData;
+427 if (moduleType == MODULE_TYPE_VALIDATOR) {
+428 moduleDeInitData = _uninstallValidator(module, deInitData);
+429 } else if (moduleType == MODULE_TYPE_EXECUTOR) {
+430 moduleDeInitData = _uninstallExecutor(module, deInitData);
+431 } else if (moduleType == MODULE_TYPE_FALLBACK) {
+432 moduleDeInitData = _uninstallFallbackHandler(module,
+  deInitData);
+55 of 86
+433 } else if (moduleType == MODULE_TYPE_HOOK) {
+434 moduleDeInitData = _uninstallHook(module, deInitData);
+435 } else {
+436 revert UnsupportedModuleType(moduleType);
+437 }
+Furthermore, when calling uninstallModule function for each type individually,
+the module’s onUninstall function will be triggered multiple times. Although
+this doesn’t pose a vulnerability for the smart account since the module will
+still be removed even if an issue arises and the onUninstall function reverts,
+this unexpected behavior could create problems for module developers and
+lead to unintended consequences within the module’s implementation.
+Additionally, supporting multi-type modules in the uninstallModule function
+would make the uninstallation of such modules more gas-efficient.
+Recommendation
+Add support for multi-type modules in the uninstallModule.
+Fix 1.1
+The finding was fixed by creating a new _multiTypeUninstall function, which
+is used in the uninstallModule function to add support for multi-type
+modules.
+===========================================================================
+W3: Hooks can prevent module uninstallation
+Impact: Warning Likelihood: N/A
+Target: Safe7579.sol Type: Denial of service
+Description
+The uninstallModule function has the withHook modifier, which triggers a
+preCheck or postCheck call to the hook. A malicious hook could be installed to
+prevent modules (and the hook itself) from being uninstalled by reverting
+during these preCheck or postCheck calls when uninstallModule is invoked.
+A simple exploit scenario involves packaging a malicious module with a hook
+that prevents the malicious module from being uninstalled as a multi-type
+module.
+Currently, there is no recovery mechanism in place to address this issue.
+Recommendation
+Removing hooks from the uninstallModule function could hinder the smart
+account’s ability to perform extended account management. As an
+alternative, additional checks could be implemented to prevent the hooks
+from impeding their uninstallation. Mainly, hooks could be designed not to
+execute if the target of the uninstallModule function is the hook itself. This
+adjustment would enable the removal of the hook to allow the malicious
+module to be uninstalled.
+Fix 1.1
+The issue was resolved by creating a specific tryWithHook modifier for the
+uninstallModule function. This modifier ensures that the hook’s preCheck and
+postCheck functions execute, except when the target of the uninstallModule
+function is the hook itself.
+===========================================================================
+W4: Missing data validations
+Impact: Warning Likelihood: N/A
+Target: Safe7579Launchpad.sol Type: Data validation
+Description
+The Safe7579Launchpad.setupSafe function contains comments "setupTo
+should be this launchpad" and "setupData should be a call to
+this.initSafe7579()", but the data validations are missing.
+Listing 12. Excerpt from Safe7579Launchpad
+268 // sload inithash from SafeProxy storage
+269 function _initHash() public view returns (bytes32 value) {
+270 // solhint-disable-next-line no-inline-assembly
+271 assembly ("memory-safe") {
+272 value := sload(INIT_HASH_SLOT)
+273 }
+274 }
+Recommendation
+Add proper data validations according to comments.
+if (initData.setupTo != address(this)) revert InvalidSetupAddress();
+if (bytes4(initData.setupData[:4]) != INIT_SAFE7579_SIGHASH) revert
+InvalidSetupData();
+Fix 1.1
+Fixed, the following data validations were implemented.
+if (initData.setupTo != SELF) revert InvalidSetup();
+if (bytes4(initData.setupData[:4]) != this.initSafe7579.selector) revert
+InvalidSetup();
+===========================================================================
+W5: Underscore prefixed public function
+Impact: Warning Likelihood: N/A
+Target: Safe7579Launchpad.sol Type: Best practices
+Description
+The Safe7579Launchpad._initHash function name contains the underscore
+prefix typical for private/internal functions, but the actual function visibility
+is public.
+Listing 13. Excerpt from Safe7579Launchpad
+268 // sload inithash from SafeProxy storage
+269 function _initHash() public view returns (bytes32 value) {
+270 // solhint-disable-next-line no-inline-assembly
+271 assembly ("memory-safe") {
+272 value := sload(INIT_HASH_SLOT)
+273 }
+274 }
+Recommendation
+Change the function visibility to internal.
+Fix 1.1
+Fixed by changing the function name to getInitHash.
+===========================================================================
+W6: Hardcoded Enum.Operation values
+Impact: Warning Likelihood: N/A
+Target: ExecutionHelper.sol Type: Best practices
+Description
+The ExecutionHelper contract uses hardcoded enum values in
+execTransactionFromModule calls, which can be confusing and lead to
+overlooked errors during development.
+Listing 14. Excerpt from Safe7579Launchpad
+37 bool success = safe.execTransactionFromModule(target, value,
+  callData, 0);
+Listing 15. Excerpt from Safe7579Launchpad
+42 bool success = safe.execTransactionFromModule(target, 0, callData,
+  1);
+Listing 16. Excerpt from Safe7579Launchpad
+79 (success, retData) = safe.execTransactionFromModuleReturnData(target,
+  value, callData, 0);
+Listing 17. Excerpt from Safe7579Launchpad
+92 (success, retData) = safe.execTransactionFromModuleReturnData(target,
+  0, callData, 1);
+Listing 18. Excerpt from Safe7579Launchpad
+113 bool success = safe.execTransactionFromModule(target, value,
+  callData, 0);
+62 of 86
+Listing 19. Excerpt from Safe7579Launchpad
+118 bool success = safe.execTransactionFromModule(target, 0, callData,
+  1);
+Listing 20. Excerpt from Safe7579Launchpad
+156 (success, retData) =
+  safe.execTransactionFromModuleReturnData(target, value, callData, 0);
+Listing 21. Excerpt from Safe7579Launchpad
+169 (success, retData) =
+  safe.execTransactionFromModuleReturnData(target, 0, callData, 1);
+Recommendation
+Use proper Enum.Operation.Call and Enum.Operation.DelegateCall for better
+readability and maintenance.
+Fix 1.1
+Fixed, the ISafe.Operation enum was introduced and used.
+===========================================================================
+W7: Incomplete unused
+Safe7579UserOperationBuilder
+Impact: Warning Likelihood: N/A
+Target: Safe7579UserOperationBuilde
+r.sol
+Type: Code quality
+Description
+The Safe7579UserOperationBuilder contract contains TODOs and commented out code. However, this contract is not used by other contracts.
+Listing 22. Excerpt from Safe7579UserOperationBuilder
+31 // TODO: change it to address[] and bytes[] to be able to
+32 // stack policies for a permission
+33 // as of now it is enough to have a single policy for demo purposes
+Listing 23. Excerpt from Safe7579UserOperationBuilder
+90 // TODO: add delegatecall, tryExecute and other execution modes
+  handling
+Listing 24. Excerpt from Safe7579UserOperationBuilder
+127 /* commented this out bc currently deployed permission validator
+  is hardcode to
+Also, the getCallData and getDummySignature functions visibility can be
+restricted to pure in the current state.
+Recommendation
+Remove the unused code and finish the incomplete code. Restrict the
+visibility of the getCallData and getDummySignature functions to pure.
+Fix 1.1
+Not fixed, mo changes were made to the Safe7579UserOperationBuilder
+contract.
+===========================================================================
+W8: Missing TryExecutionFailed emits
+Impact: Warning Likelihood: N/A
+Target: ExecutionHelper.sol Type: Code quality
+Description
+The event TryExecutionFailed is emitted when a try execution fails in the
+ExecutionHelper helper contract.
+Listing 25. Excerpt from ExecutionHelper
+20 event TryExecutionFailed(ISafe safe, uint256 numberInBatch);
+However, when calling a batch of executions, the event is only emitted when
+the whole batch fails due to the implementation, when a batch is internally
+executed through a single delegatecall.
+Listing 26. Excerpt from ExecutionHelper
+104 function _tryExec(ISafe safe, Execution[] calldata executions) internal
+  {
+105 _tryDelegatecall({
+106 safe: safe,
+107 target: UTIL,
+108 callData: abi.encodeCall(BatchedExecUtil.tryExecute, executions)
+109 });
+110 }
+Listing 27. Excerpt from ExecutionHelper
+117 function _tryDelegatecall(ISafe safe, address target, bytes memory
+  callData) internal {
+118 bool success = safe.execTransactionFromModule(target, 0, callData,
+  1);
+119 if (!success) emit TryExecutionFailed(safe, 0);
+120 }
+As a consequence, the numberInBatch parameter is always 0 when the event is
+emitted, which can be misleading.
+Recommendation
+Either change the implementation to allow logging the event with the correct
+numberInBatch or remove the numberInBatch parameter from the event to avoid
+confusion and save gas.
+Fix 1.1
+Fixed by emitting the correct event in function _tryExecReturn(ISafe safe,
+Execution[] calldata executions) while keeping the implementation for
+function _tryExec(ISafe safe, Execution[] calldata executions).
+===========================================================================
+I1: Duplicated code
+Impact: Info Likelihood: N/A
+Target: Safe7579Launchpad.sol Type: Code quality
+Description
+When installing a module, a call to ModuleInstallUtil.installModule is used to
+invoke the module’s onInstall function and emits the required event.
+Listing 28. Excerpt from ModuleInstallUtil
+11 function installModule(
+12 uint256 moduleTypeId,
+13 address module,
+14 bytes calldata initData
+15 )
+16 external
+17 {
+18 IERC7579Module(module).onInstall(initData);
+19 emit ModuleInstalled(moduleTypeId, address(module));
+20 }
+Safe7579Launchpad.validateUserOp does not reuse
+ModuleInstallUtil.installModule when setting up validators and duplicates
+its code.
+Listing 29. Excerpt from Safe7579Launchpad
+191 uint256 validatorsLength = initData.validators.length;
+192 for (uint256 i; i < validatorsLength; i++) {
+193 address validatorModule = initData.validators[i].module;
+194
+  IValidator(validatorModule).onInstall(initData.validators[i].initData);
+195 emit ModuleInstalled(1, validatorModule);
+196 
+197 if (validatorModule == validator) userOpValidatorInstalled =
+  true;
+198 }
+Recommendation
+Replace the duplicated code with a call to ModuleInstallUtil.installModule.
+Fix 1.1
+Acknowledged.
+===========================================================================
+I2: Unused code
+Impact: Info Likelihood: N/A
+Target: **/* Type: Code quality
+Description
+The project contains multiple occurrences of unused code.
+Interfaces - IValidator, IExecutor, IFallback.
+ISafe7579 - errors LinkedListError, InitializerError,
+ValidatorStorageHelperError, HookPostCheckFailed, - unused using ModeLib for
+ModeCode.
+IERC7484 - event NewTrustedAttesters (not even part of the ERC-7484).
+IModule - errors AlreadyInitialized, NotInitialized.
+IValidator - error InvalidTargetAddress.
+IERC7579Account - event AccountInitializationFailed.
+IERC7579AccountEvents - events ModuleInstalled, ModuleUninstalled.
+ExecutionHelper - event TryExecutionsFailed.
+Safe7579UserOperationBuilder - The contract is not used, - getCallData
+function contains unused parameters smartAccount and context, -
+getDummySignature function contains unused parameters smartAccount and
+executions.
+Safe7579Launchpad - constants DOMAIN_SEPARATOR_TYPEHASH,
+SAFE_INIT_TYPEHASH, - function _domainSeparator.
+Recommendation
+Remove or utilize the unused code to improve the readability and
+maintainability of the codebase.
+Fix 1.1
+Fixed.
+===========================================================================
+I3: Typos and incorrect documentation
+Impact: Info Likelihood: N/A
+Target: **/* Type: Code quality
+Description
+There are several typos and documentation issues across the project.
+• The Safe7579.sol file contains comments that are incorrectly switched on
+L95 and L100, as well as L197 and L202.
+• The ModuleManager.getValidatorPaginated function name should be
+getValidatorsPaginated. Also, the function uses inconsistent parameter
+naming - cursor instead of start like in other functions and SentinelList.
+• False comment in ModuleManager L489 - bytes[] moduleInitData should be
+bytes moduleInitData.
+• Safe7579.sol L177 - "need need" → "need".
+• Safe7579.sol L383 - "sanitzied" → "sanitized".
+• Safe7579.sol L424 - "sanitzied" → "sanitized".
+• Initializer.sol L58 - "deplomet" → "deployment".
+Recommendation
+Fix the typos and documentation to improve code quality.
+Fix 1.1
+===========================================================================
+I4: Code structure
+Impact: Info Likelihood: N/A
+Target: **/* Type: Code quality
+Description
+Summary of findings regarding the code structure.
+• The Safe7579.sol file contains also the EIP712 library. Move the library to a
+separate file into the lib directory.
+• The Safe7579DCUtil.sol file contains Safe7579DCUtilSetup contract. Unify
+the naming.
+• In the Safe7579Launchpad contract, modifiers are placed below the
+constructor. Move modifiers above the constructor.
+• The ISafe7579 interface is placed in the root. Move the file into the
+interfaces directory.
+Recommendation
+Fix these minor issues to improve code quality and readability.
+Fix 1.1
+Acknowledged.
+Actually prefer the readability as it is now.
