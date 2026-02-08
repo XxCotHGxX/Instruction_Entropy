@@ -60,3 +60,8 @@ obj/
 
 # Paper Source (Keep private until publication)
 paper/
+LINKEDIN_ARTICLE.md
+data/raw_leads.json
+data/audited_leads.json
+data/risk_assessment.md
+data/outreach_drafts.md
