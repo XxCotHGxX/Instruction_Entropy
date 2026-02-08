@@ -1,34 +1,27 @@
-# Instruction Entropy: The Complexity Kink and The AI Labor Floor (2026)
+# Instruction Entropy: Quantifying the High-Entropy Regime (2026)
 
-**Econometric mapping of the structural tipping point where task complexity causes a collapse in AI Marginal Productivity.**
+**A methodological framework for identifying the structural limits of AI productivity in multi-asset professional environments.**
 
-This repository contains the data pipeline and formal econometric models used to identify the "Complexity Kink"---the mathematical boundary between commoditized labor and the high-value "Expert Zone" in the 2026 AI economy.
+This repository contains the exploratory data pipeline and econometric models used to map the "High-Entropy Regime"---the informational coordinate where task complexity causes a non-linear collapse in AI Marginal Productivity.
 
 ## Core Concepts
 
-*   **Instruction Entropy (E):** A measurement of "Inference Density." Defined as the ratio of text-based solution tokens (logic) to instruction tokens, adjusted for boilerplate and smoothed for instruction quality. **Statistically significant (p < 0.01) as a driver of the human wage premium.**
-*   **Artifact Coupling (kappa):** A Reference Density metric measuring structural state dependency density across solution assets.
-*   **The Complexity Kink:** The statistically significant (p < 0.001) non-linear threshold where AI productivity collapses, identified via a Regression Kink Design (RKD) on a decomposed dataset of **N=58** professional subtasks.
+*   **Inference Density (E):** An Information-Theoretic measure of "Hidden Requirements." Defined as the expansion ratio between the Minimum Description Length (MDL) of the instruction set and the resulting solution.
+*   **Coordination Complexity (kappa):** A normalized reference-density metric quantifying state-dependency across multiple solution assets.
+*   **The Structural Break:** The non-linear threshold where the cost of AI orchestration begins to exceed the value of execution, defining the 2026 human labor floor.
 
-## Research Objectives
-
-1.  **Map the Cliff:** Identify the exact E-kappa coordinates where LLMs and Agentic Frameworks fail to maintain productivity.
-2.  **Quantify the Premium:** Measure the "Market Equilibrium Value"---the economic surplus humans command when working in high-entropy, high-coupling domains.
-3.  **Track the Shift:** Model the rightward movement of the Kink as "Agentic Loops" attempt to lower the cost of Artifact Coupling.
-
-## Methodology
+## Research Methodology (Pilot Study)
 
 *   **Data:** Scale AI RLI (Remote Labor Index) Public Set + O*NET Baseline Wages.
-*   **Decomposition:** 10 foundational projects are decomposed into **156 discrete professional requirements**, resulting in a filtered econometric dataset of **N=58** valid subtasks.
-*   **Econometrics:** Clustered Hedonic Translog Production Function and **Regression Kink Design (RKD)**. Standard Errors are clustered at the project level to account for within-project correlation.
-*   **Pipeline:** Boilerplate-agnostic tokenization and **Reference Density** analysis for kappa calculation.
+*   **Selection Correction:** A two-stage Heckman procedure utilizing 'Automation Exposure' as an instrument to account for non-random task inclusion in benchmarks.
+*   **Econometrics:** Clustered Hedonic Translog Production Function with **Wild Cluster Bootstrap-t** estimation to generate robust inference from finite samples (G=10 projects, N=156 requirements).
 
-## Visualizations
+## Repository Content
 
 The `output/` directory contains high-fidelity econometric assets:
-*   **The Complexity Frontier (KDE):** A continuous gradient map of labor distribution across inference and coordination axes.
-*   **Wage Residual Heatmap:** Mapping the economic divergence between AI models and human experts.
-*   **The Piecewise Kink Plot:** Visualizing the non-linear shift in wage elasticity.
+*   **The Technological Frontier (KDE):** A continuous gradient map of labor distribution across inference and coordination axes.
+*   **Selection Response Surface:** Mapping the probability of task inclusion vs. automation exposure.
+*   **Structural Break Analysis:** Visualizing the non-linear shift in wage elasticity.
 
 ## License and Trademarks
 
