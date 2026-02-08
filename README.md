@@ -1,14 +1,14 @@
-# Instruction Entropy: A Methodological Proposal for Mapping the High-Entropy Regime (2026)
+# Instruction Entropy: Quantifying the Complexity Kink (2026)
 
-**An exploratory framework for identifying the structural limits of AI productivity in multi-asset professional environments.**
+**A methodological framework for identifying the structural limits of AI productivity via the High-Entropy Regime.**
 
-This repository contains the exploratory data pipeline and econometric models used to map the "High-Entropy Regime"---the informational boundary where task complexity causes a non-linear collapse in AI Marginal Productivity.
+This repository contains the exploratory data pipeline and econometric models used to map the **"Complexity Kink"**---the structural break where task complexity causes a non-linear collapse in AI Marginal Productivity.
 
 ## Core Concepts
 
 *   **Inference Density (E):** An Information-Theoretic measure of "Hidden Requirements." Defined as the expansion ratio between the Minimum Description Length (MDL) of the instruction set and the resulting solution.
 *   **Coordination Complexity (kappa):** A normalized reference-density metric quantifying state-dependency across multiple solution assets.
-*   **The Structural Break:** The informational coordinate where the cost of AI orchestration begins to exceed the value of execution, defining the 2026 human labor floor.
+*   **The Complexity Kink (Structural Break):** The informational coordinate where the cost of AI orchestration begins to exceed the value of execution, defining the 2026 human labor floor.
 
 ## Research Methodology (Pilot Study)
 
